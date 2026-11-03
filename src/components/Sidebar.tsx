@@ -1,4 +1,4 @@
-import { Hash, House, KeyRound, Layers, Lock, Moon, Pencil, Plus, Settings, Star, StickyNote, Sun, Wifi } from "lucide-react";
+import { Hash, House, KeyRound, Layers, Lock, Pencil, Plus, Settings, Star, StickyNote, Wifi } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Issue } from "../lib/health";
 import type { Category, Member } from "../lib/types";
@@ -21,15 +21,12 @@ interface Props {
   onSettings: () => void;
   onAddMember: () => void;
   onEditMember: (m: Member) => void;
-  theme: "light" | "dark";
-  onToggleTheme: () => void;
 }
 
 const same = (a: Filter, b: Filter) => JSON.stringify(a) === JSON.stringify(b);
 
 export function Sidebar(props: Props) {
-  const { members, filter, onFilter, counts, onLock, onSettings, onAddMember, onEditMember, theme, onToggleTheme } =
-    props;
+  const { members, filter, onFilter, counts, onLock, onSettings, onAddMember, onEditMember } = props;
 
   const Item = ({ f, icon, label, count }: { f: Filter; icon: ReactNode; label: string; count: number }) => (
     <button className="nav-item" data-active={same(f, filter) || undefined} onClick={() => onFilter(f)}>
@@ -119,9 +116,6 @@ export function Sidebar(props: Props) {
         <div className="sidebar-foot-icons">
           <button className="icon-btn" onClick={onSettings} aria-label="Einstellungen" title="Einstellungen">
             <Settings size={15} />
-          </button>
-          <button className="icon-btn" onClick={onToggleTheme} aria-label="Farbschema wechseln" title="Farbschema wechseln">
-            {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
           </button>
         </div>
       </div>

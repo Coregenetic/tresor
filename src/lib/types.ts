@@ -23,8 +23,20 @@ export interface Entry {
   memberIds: MemberId[];
   favorite?: boolean;
   updatedAt: string; // ISO
+  /** Letzte Passwortänderung (ISO) – Grundlage für "Alt" im Sicherheitscheck */
+  passwordChangedAt?: string;
   /** Zuletzt kopiert/verwendet (ISO) */
   usedAt?: string;
+  pin?: string;
+  iban?: string;
+  /** Vertragsende als Datum (JJJJ-MM-TT) */
+  contractEnd?: string;
+  questions?: SecurityQuestion[];
+}
+
+export interface SecurityQuestion {
+  q: string;
+  a: string;
 }
 
 export interface Settings {

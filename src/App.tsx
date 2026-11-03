@@ -11,28 +11,21 @@ import { SetupScreen } from "./components/SetupScreen";
 import { Sidebar, type Filter } from "./components/Sidebar";
 import { api, errorText, isTauri, type VaultData, type VaultStatus } from "./lib/api";
 import { analyze, ISSUE_LABEL, type HealthReport } from "./lib/health";
+import { checkForUpdate, dueContracts, notifyDueContracts, type AvailableUpdate } from "./lib/system";
 import type { Category, Entry, Member, Settings } from "./lib/types";
 
-type Theme = "light" | "dark";
 type Phase = "loading" | "setup" | "locked" | "unlocked" | "error";
 type Editing = null | { id?: string };
 type Dialog = null | { kind: "settings" } | { kind: "member"; member?: Member };
 
 const HOME: Filter = { kind: "home" };
 
-function initialTheme(): Theme {
-  try {
-    const saved = localStorage.getItem("tresor-theme");
-    if (saved === "light" || saved === "dark") return saved;
-  } catch {
-    /* ignorieren */
-  }
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
 function matches(e: Entry, q: string) {
   if (!q) return true;
-  const hay = [e.title, e.domain, e.username, e.customerNumber, e.notes].filter(Boolean).join(" ").toLowerCase();
+  const hay = [e.title, e.domain, e.username, e.customerNumber, e.notes, e.iban]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
   return q
     .toLowerCase()
     .split(/\s+/)
@@ -68,7 +61,9 @@ export default function App() {
   const pending = useRef<VaultData | null>(null);
   const saveChain = useRef<Promise<unknown>>(Promise.resolve());
 
-  const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [update, setUpdate] = useState<AvailableUpdate | null>(null);
+  const updateChecked = useRef(false);
+  const [freshId, setFreshId] = useState<string | undefined>();
   const [filter, setFilter] = useState<Filter>(HOME);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | undefined>();
@@ -89,15 +84,6 @@ export default function App() {
         setPhase("error");
       });
   }, []);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    try {
-      localStorage.setItem("tresor-theme", theme);
-    } catch {
-      /* ignorieren */
-    }
-  }, [theme]);
 
   /** Änderungen sofort anzeigen und der Reihe nach verschlüsselt speichern. */
   const persist = useCallback((next: VaultData) => {
@@ -132,7 +118,29 @@ export default function App() {
     setFilter(HOME);
     setPhase("unlocked");
     api.setLockOnMinimize(next.settings.lockOnMinimize).catch(() => undefined);
-  }, []);
+    notifyDueContracts(next.entries).catch(() => undefined);
+    // Einmal pro Programmstart still nach Updates schauen
+    if (!updateChecked.current) {
+      updateChecked.current = true;
+      checkForUpdate()
+        .then((u) => {
+          if (!u) return;
+          setUpdate(u);
+          toast(`Version ${u.version} ist verfügbar`, {
+            id: "update",
+            duration: 10_000,
+            action: { label: "Aktualisieren", onClick: () => installUpdate(u) },
+          });
+        })
+        .catch(() => undefined);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function installUpdate(u: AvailableUpdate) {
+    const id = toast.loading("Update wird geladen…", { id: "update" });
+    u.install((p) => toast.loading(`Update wird geladen… ${Math.round(p * 100)} %`, { id }))
+      .catch((e) => toast.error("Update fehlgeschlagen", { id, description: errorText(e) }));
+  }
 
   // Rust sperrt beim Minimieren selbst und meldet das hier
   useEffect(() => {
@@ -167,6 +175,7 @@ export default function App() {
   const members = data?.members ?? [];
   const entries = data?.entries ?? [];
   const health = useMemo(() => analyze(entries), [entries]);
+  const due = useMemo(() => dueContracts(entries), [entries]);
 
   const counts = useMemo(() => {
     const category = { login: 0, kundennummer: 0, wlan: 0, notiz: 0 } as Record<Category, number>;
@@ -203,6 +212,8 @@ export default function App() {
     if (!matches(entry, query.trim())) setQuery("");
     setSelectedId(entry.id);
     setEditing(null);
+    setFreshId(entry.id);
+    window.setTimeout(() => setFreshId((id) => (id === entry.id ? undefined : id)), 1200);
     toast.success(exists ? "Gespeichert" : `${entry.title} angelegt`);
   }
 
@@ -419,8 +430,6 @@ export default function App() {
           onSettings={() => setDialog({ kind: "settings" })}
           onAddMember={() => setDialog({ kind: "member" })}
           onEditMember={(m) => setDialog({ kind: "member", member: m })}
-          theme={theme}
-          onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         />
 
         {filter.kind === "home" && !editing ? (
@@ -429,6 +438,10 @@ export default function App() {
             members={members}
             health={health}
             memberCounts={counts.member}
+            due={due}
+            helloEnabled={!!status?.helloEnabled}
+            update={update}
+            onInstallUpdate={() => update && installUpdate(update)}
             onSearch={(q) => {
               setQuery(q);
               setFilter({ kind: "all" });
@@ -449,6 +462,7 @@ export default function App() {
               isEmptyVault={entries.length === 0}
               members={members}
               selectedId={editing && !editing.id ? undefined : selectedId}
+              freshId={freshId}
               onSelect={(id) => {
                 setEditing(null);
                 setSelectedId(id);
@@ -517,7 +531,7 @@ export default function App() {
   return (
     <>
       {screen}
-      <Toaster position="bottom-right" theme={theme} toastOptions={{ className: "toast" }} />
+      <Toaster position="bottom-right" theme="dark" toastOptions={{ className: "toast" }} />
     </>
   );
 }

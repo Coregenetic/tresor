@@ -8,12 +8,27 @@ Lokaler Passwort- und Kundennummern-Tresor für die Familie. Windows-Desktop-App
 - **Etappe 2 (fertig):** Rust-Kern – Verschlüsselung (AES-256-GCM, Argon2id), Windows Hello (TPM), Master-Passwort, Ersteinrichtung
 - **Etappe 3 (fertig):** Einträge anlegen/bearbeiten/löschen, Familie verwalten, Einstellungen (Hello, Master-Passwort)
 - **Etappe 4 (fertig):** Startseite mit Sicherheitscheck, Auto-Sperre, Sperren beim Minimieren, sichere Zwischenablage, verschlüsseltes Backup
-- Etappe 5: Feinschliff, Release
+- **Etappe 5 (fertig):** Midnight-Design, Tray, automatische Updates, PIN/IBAN/Vertragsende/Sicherheitsfragen, Passwort-Generator
 
 ## Installer bekommen
 
-Bei jedem Push auf `main` baut GitHub Actions den Windows-Installer.
-Repo → **Actions** → letzter Lauf „Windows-Build“ → unten unter **Artifacts** `Tresor-Installer` herunterladen.
+- **Testversion:** Jeder Push auf `main` baut den Installer → Repo → **Actions** → letzter Lauf → **Artifacts** → `Tresor-Installer`.
+- **Release (mit automatischem Update):** Version in `package.json`, `src-tauri/tauri.conf.json` und `src-tauri/Cargo.toml` erhöhen, committen, dann
+  ```bash
+  git tag v0.5.0
+  git push origin v0.5.0
+  ```
+  GitHub veröffentlicht ein Release. Installierte Apps finden es beim nächsten Entsperren und aktualisieren sich.
+
+## Updates einrichten (einmalig)
+
+Updates werden signiert, damit die App nur echte Versionen installiert.
+
+1. Repo muss **öffentlich** sein (sonst kann die App das Release nicht abrufen).
+2. Repo → **Settings → Secrets and variables → Actions → New repository secret**:
+   - `TAURI_SIGNING_PRIVATE_KEY` = kompletter Inhalt der Datei `tresor-updater.key`
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` = das zugehörige Passwort
+3. Schlüssel und Passwort sicher aufbewahren (z. B. als Notiz im Tresor). Ohne sie lassen sich keine Updates mehr veröffentlichen.
 
 ## Lokal entwickeln (optional)
 

@@ -43,7 +43,7 @@ export function analyze(entries: Entry[], now = Date.now()): HealthReport {
     if (!e.password) continue;
     checked++;
     if (isWeak(e.password)) weak.add(e.id);
-    if (now - new Date(e.updatedAt).getTime() > YEAR_MS) old.add(e.id);
+    if (now - new Date(e.passwordChangedAt ?? e.updatedAt).getTime() > YEAR_MS) old.add(e.id);
     const list = byPassword.get(e.password) ?? [];
     list.push(e.id);
     byPassword.set(e.password, list);

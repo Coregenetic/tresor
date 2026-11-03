@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{Emitter, Manager, State, WindowEvent};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use vault::{Key, VaultFile};
 
 /// Entsperrter Zustand: Datei + Schlüssel nur im Arbeitsspeicher, wird beim Sperren verworfen.
@@ -292,12 +294,73 @@ async fn vault_change_password(state: State<'_, AppState>, current: String, next
     Ok(())
 }
 
+/// Hauptfenster zeigen und nach vorne holen (Tray, zweiter Programmstart).
+fn show_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// Sperren und das Frontend informieren.
+fn lock_and_notify(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let was_unlocked = state.session.lock().unwrap().is_some();
+    state.lock_now();
+    if was_unlocked {
+        let _ = app.emit("vault-locked", ());
+    }
+}
+
+fn build_tray(app: &tauri::App) -> tauri::Result<()> {
+    let open = MenuItem::with_id(app, "open", "Tresor öffnen", true, None::<&str>)?;
+    let lock = MenuItem::with_id(app, "lock", "Sperren", true, None::<&str>)?;
+    let sep = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, "quit", "Beenden", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &lock, &sep, &quit])?;
+
+    let mut tray = TrayIconBuilder::with_id("main")
+        .tooltip("Tresor")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open" => show_main(app),
+            "lock" => lock_and_notify(app),
+            "quit" => {
+                lock_and_notify(app);
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                show_main(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Zweiter Start: kein neues Fenster, sondern das vorhandene nach vorne holen
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)));
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            build_tray(app)?;
             let dir = app.path().app_data_dir()?;
             fs::create_dir_all(&dir)?;
             app.manage(AppState {
@@ -309,6 +372,13 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Schließen = in den Infobereich und sperren (Beenden über das Tray-Menü)
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+                lock_and_notify(window.app_handle());
+                return;
+            }
             // Beim Minimieren sofort sperren – im Rust-Kern, damit der Schlüssel sicher weg ist
             if let WindowEvent::Resized(_) = event {
                 if window.is_minimized().unwrap_or(false) {

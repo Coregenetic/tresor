@@ -1,15 +1,23 @@
-import { AlertTriangle, ArrowRight, Copy, History, Plus, Search, ShieldCheck, Star } from "lucide-react";
+import { ArrowRight, CalendarClock, Copy, Download, Fingerprint, History, Lock, Plus, Search, ShieldCheck, Star } from "lucide-react";
 import { useMemo } from "react";
+import { contractLabel } from "../lib/format";
 import type { HealthReport, Issue } from "../lib/health";
+import { useCountUp } from "../lib/motion";
+import type { AvailableUpdate } from "../lib/system";
 import type { Entry, Member } from "../lib/types";
 import { Avatar } from "./Avatar";
 import { ProviderLogo } from "./ProviderLogo";
+import { Ring } from "./Ring";
 
 interface Props {
   entries: Entry[];
   members: Member[];
   health: HealthReport;
   memberCounts: Record<string, number>;
+  due: { entry: Entry; days: number }[];
+  helloEnabled: boolean;
+  update: AvailableUpdate | null;
+  onInstallUpdate: () => void;
   onSearch: (q: string) => void;
   onOpen: (id: string) => void;
   onMember: (id: string) => void;
@@ -41,8 +49,24 @@ function subtitle(e: Entry) {
   return e.username ?? e.domain ?? "";
 }
 
+function Stat({ dot, label, value, sub, onClick }: { dot: string; label: string; value: number; sub: string; onClick?: () => void }) {
+  const n = useCountUp(value, 900, 150);
+  const Tag = onClick ? "button" : "div";
+  return (
+    <Tag className="stat" onClick={onClick} data-clickable={onClick ? true : undefined}>
+      <span className="stat-label">
+        <span className="dot" style={{ background: dot }} />
+        {label}
+      </span>
+      <span className="stat-value">{n}</span>
+      <span className="stat-sub">{sub}</span>
+    </Tag>
+  );
+}
+
 export function Home(props: Props) {
-  const { entries, members, health, memberCounts, onSearch, onOpen, onMember, onIssue, onNew, onAddMember } = props;
+  const { entries, members, health, memberCounts, due, helloEnabled, update } = props;
+  const { onInstallUpdate, onSearch, onOpen, onMember, onIssue, onNew, onAddMember } = props;
 
   const favorites = useMemo(
     () => entries.filter((e) => e.favorite).sort((a, b) => a.title.localeCompare(b.title, "de")),
@@ -57,26 +81,83 @@ export function Home(props: Props) {
     [entries],
   );
 
-  const issues: { key: Issue; count: number; hint: string }[] = [
-    { key: "weak", count: health.weak.size, hint: "Kurz oder leicht zu erraten" },
-    { key: "reused", count: health.reused.size, hint: "Gleiches Passwort bei mehreren Anbietern" },
-    { key: "old", count: health.old.size, hint: "Seit über einem Jahr nicht geändert" },
-  ];
+  const score = health.checked === 0 ? 1 : (health.checked - health.affected) / health.checked;
+  const percent = useCountUp(Math.round(score * 100), 1100, 120);
   const allGood = health.affected === 0;
+  const tone = score >= 0.9 ? "success" : score >= 0.6 ? "brand" : "warning";
+  const firstIssue: Issue | null = health.weak.size ? "weak" : health.reused.size ? "reused" : health.old.size ? "old" : null;
+
+  const issues: { key: Issue; count: number; title: string; hint: string }[] = [
+    { key: "weak", count: health.weak.size, title: "Schwach", hint: "Kurz oder leicht zu erraten" },
+    { key: "reused", count: health.reused.size, title: "Mehrfach verwendet", hint: "Gleiches Passwort bei mehreren Anbietern" },
+    { key: "old", count: health.old.size, title: "Alt", hint: "Seit über einem Jahr nicht geändert" },
+  ];
 
   return (
     <section className="home">
       <div className="home-inner">
-        <header className="home-head home-anim">
-          <h1 className="home-title">{greeting()}</h1>
-          <p className="home-sub">
-            {entries.length === 0
-              ? "Dein Tresor ist bereit für den ersten Zugang."
-              : `${entries.length} ${entries.length === 1 ? "Zugang" : "Zugänge"} für ${members.length} ${
-                  members.length === 1 ? "Person" : "Personen"
-                } – sicher verschlüsselt.`}
-          </p>
-        </header>
+        {/* ── Hero ── */}
+        <div className="hero home-anim">
+          <Ring value={score} size={196} stroke={16} tone={tone} animateIn className="hero-ring">
+            <span className="hero-percent">
+              {percent}
+              <small>%</small>
+            </span>
+            <span className="hero-ring-label">Sicher</span>
+          </Ring>
+
+          <div className="hero-body">
+            <span className="eyebrow">{greeting()}</span>
+            <h1 className="hero-title">
+              {entries.length === 0 ? "Bereit für deinen ersten Zugang" : allGood ? "Alles sicher" : `${health.affected} Einträge prüfen`}
+            </h1>
+            <div className="stats">
+              <Stat
+                dot="var(--blue)"
+                label="Zugänge"
+                value={entries.length}
+                sub={`für ${members.length} ${members.length === 1 ? "Person" : "Personen"}`}
+              />
+              <Stat
+                dot="var(--pink)"
+                label="Hinweise"
+                value={health.affected}
+                sub={allGood ? "nichts zu tun" : "im Sicherheitscheck"}
+                onClick={firstIssue ? () => onIssue(firstIssue) : undefined}
+              />
+              <Stat
+                dot={due.length ? "var(--orange)" : "var(--green)"}
+                label="Verträge"
+                value={due.length}
+                sub={due.length ? `${due[0].entry.title} ${contractLabel(due[0].days)}` : "keiner endet bald"}
+                onClick={due.length ? () => onOpen(due[0].entry.id) : undefined}
+              />
+            </div>
+            <div className="pills">
+              <span className="pill">
+                <Lock size={12} /> AES-256 verschlüsselt
+              </span>
+              {helloEnabled && (
+                <span className="pill">
+                  <Fingerprint size={12} /> Windows Hello aktiv
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {update && (
+          <button className="update-banner home-anim" onClick={onInstallUpdate}>
+            <span className="update-icon">
+              <Download size={16} />
+            </span>
+            <span className="toggle-text">
+              <span className="toggle-title">Version {update.version} ist verfügbar</span>
+              <span className="toggle-sub">Jetzt aktualisieren – dauert nur einen Moment.</span>
+            </span>
+            <ArrowRight size={16} />
+          </button>
+        )}
 
         <label className="home-search home-anim">
           <Search size={18} className="home-search-icon" />
@@ -103,15 +184,39 @@ export function Home(props: Props) {
           <div className="home-section home-anim">
             <div className="home-section-head">
               <h2>
-                <Star size={14} /> Favoriten
+                <Star size={13} /> Favoriten
               </h2>
             </div>
             <div className="tile-grid">
-              {favorites.map((e) => (
-                <button key={e.id} className="tile" onClick={() => onOpen(e.id)}>
-                  <ProviderLogo title={e.title} domain={e.domain} size={40} />
+              {favorites.map((e, i) => (
+                <button key={e.id} className="tile" onClick={() => onOpen(e.id)} style={{ ["--i" as string]: i }}>
+                  <ProviderLogo title={e.title} domain={e.domain} size={42} />
                   <span className="tile-title">{e.title}</span>
                   <span className="tile-sub">{subtitle(e)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {due.length > 0 && (
+          <div className="home-section home-anim">
+            <div className="home-section-head">
+              <h2>
+                <CalendarClock size={13} /> Verträge
+              </h2>
+            </div>
+            <div className="panel">
+              {due.map(({ entry, days }) => (
+                <button key={entry.id} className="panel-row" onClick={() => onOpen(entry.id)}>
+                  <ProviderLogo title={entry.title} domain={entry.domain} size={30} />
+                  <span className="row-text">
+                    <span className="row-title">{entry.title}</span>
+                    <span className="row-sub">{contractLabel(days)}</span>
+                  </span>
+                  <span className="due-chip" data-tone={days < 0 ? "past" : days <= 7 ? "urgent" : "soon"}>
+                    {days < 0 ? "abgelaufen" : days === 0 ? "heute" : `${days} T.`}
+                  </span>
                 </button>
               ))}
             </div>
@@ -123,7 +228,7 @@ export function Home(props: Props) {
             <div className="home-section home-anim">
               <div className="home-section-head">
                 <h2>
-                  <History size={14} /> Zuletzt verwendet
+                  <History size={13} /> Zuletzt verwendet
                 </h2>
               </div>
               <div className="panel">
@@ -148,21 +253,10 @@ export function Home(props: Props) {
             <div className="home-section home-anim">
               <div className="home-section-head">
                 <h2>
-                  <ShieldCheck size={14} /> Sicherheitscheck
+                  <ShieldCheck size={13} /> Sicherheitscheck
                 </h2>
               </div>
               <div className="panel">
-                <div className="health-summary" data-good={allGood || undefined}>
-                  <span className="health-badge">
-                    {allGood ? <ShieldCheck size={18} /> : <AlertTriangle size={18} />}
-                  </span>
-                  <span className="toggle-text">
-                    <span className="toggle-title">{allGood ? "Alles in Ordnung" : `${health.affected} Einträge prüfen`}</span>
-                    <span className="toggle-sub">
-                      {health.checked} {health.checked === 1 ? "Passwort" : "Passwörter"} geprüft
-                    </span>
-                  </span>
-                </div>
                 {issues.map((i) => (
                   <button
                     key={i.key}
@@ -173,9 +267,7 @@ export function Home(props: Props) {
                   >
                     <span className="health-count">{i.count}</span>
                     <span className="row-text">
-                      <span className="row-title">
-                        {i.key === "weak" ? "Schwach" : i.key === "reused" ? "Mehrfach verwendet" : "Alt"}
-                      </span>
+                      <span className="row-title">{i.title}</span>
                       <span className="row-sub">{i.hint}</span>
                     </span>
                     {i.count > 0 && <ArrowRight size={14} className="panel-arrow" />}
@@ -192,8 +284,8 @@ export function Home(props: Props) {
           </div>
           <div className="family-grid">
             {members.map((m) => (
-              <button key={m.id} className="family-card" onClick={() => onMember(m.id)}>
-                <Avatar member={m} size={36} />
+              <button key={m.id} className="family-card" onClick={() => onMember(m.id)} style={{ ["--hue" as string]: m.hue }}>
+                <Avatar member={m} size={38} />
                 <span className="family-name">{m.name}</span>
                 <span className="family-count">
                   {memberCounts[m.id] ?? 0} {(memberCounts[m.id] ?? 0) === 1 ? "Eintrag" : "Einträge"}

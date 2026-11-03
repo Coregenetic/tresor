@@ -10,6 +10,8 @@ interface Props {
   isEmptyVault: boolean;
   members: Member[];
   selectedId?: string;
+  /** Kurz hervorheben (gerade gespeichert) */
+  freshId?: string;
   onSelect: (id: string) => void;
   onNew: () => void;
   query: string;
@@ -22,7 +24,7 @@ function subtitle(e: Entry) {
   return e.username ?? e.customerNumber ?? e.domain ?? "";
 }
 
-export function EntryList({ title, entries, isEmptyVault, members, selectedId, onSelect, onNew, query, onQuery, searchRef }: Props) {
+export function EntryList({ title, entries, isEmptyVault, members, selectedId, freshId, onSelect, onNew, query, onQuery, searchRef }: Props) {
   const byId = new Map(members.map((m) => [m.id, m]));
 
   return (
@@ -68,6 +70,7 @@ export function EntryList({ title, entries, isEmptyVault, members, selectedId, o
             aria-selected={e.id === selectedId}
             className="row"
             data-active={e.id === selectedId || undefined}
+            data-fresh={e.id === freshId || undefined}
             onClick={() => onSelect(e.id)}
           >
             <ProviderLogo title={e.title} domain={e.domain} size={34} />

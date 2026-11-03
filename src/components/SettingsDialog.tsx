@@ -1,9 +1,11 @@
-import { Download, Fingerprint, KeyRound, Minimize2, ShieldCheck, Timer, Upload } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { Download, Fingerprint, KeyRound, Minimize2, RefreshCw, ShieldCheck, Sparkles, Timer, Upload } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { api, errorText, type VaultData } from "../lib/api";
 import type { Settings } from "../lib/types";
+import { appVersion, checkForUpdate, type AvailableUpdate } from "../lib/system";
 import { Modal } from "./Modal";
+import { Segmented } from "./Segmented";
 
 interface Props {
   settings: Settings;
@@ -16,7 +18,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = "security" | "backup" | "password";
+type Tab = "security" | "backup" | "password" | "info";
 
 const LOCK_OPTIONS = [
   { value: 1, label: "1 Min." },
@@ -33,26 +35,19 @@ export function SettingsDialog(props: Props) {
   return (
     <Modal title="Einstellungen" onClose={onClose} width={480}>
       <div className="modal-body">
-        <div className="segmented segmented--full" role="tablist">
-          {(
-            [
-              ["security", "Sicherheit"],
-              ["backup", "Backup"],
-              ["password", "Master-Passwort"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              role="tab"
-              aria-selected={tab === value}
-              className="segment"
-              data-active={tab === value || undefined}
-              onClick={() => setTab(value)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label="Bereich"
+          role="tablist"
+          full
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: "security", label: "Sicherheit" },
+            { value: "backup", label: "Backup" },
+            { value: "password", label: "Passwort" },
+            { value: "info", label: "Info" },
+          ]}
+        />
 
         {tab === "security" && (
           <SecurityTab
@@ -65,6 +60,7 @@ export function SettingsDialog(props: Props) {
         )}
         {tab === "backup" && <BackupTab onImport={onImport} />}
         {tab === "password" && <PasswordTab />}
+        {tab === "info" && <InfoTab />}
       </div>
     </Modal>
   );
@@ -111,20 +107,14 @@ function SecurityTab({
             <span className="toggle-sub">Nach dieser Zeit ohne Maus- oder Tastatureingabe.</span>
           </span>
         </div>
-        <div className="segmented segmented--full segmented--sm" role="radiogroup" aria-label="Automatisch sperren">
-          {LOCK_OPTIONS.map((o) => (
-            <button
-              key={o.value}
-              role="radio"
-              aria-checked={settings.autoLockMinutes === o.value}
-              className="segment"
-              data-active={settings.autoLockMinutes === o.value || undefined}
-              onClick={() => onSettingsChange({ ...settings, autoLockMinutes: o.value })}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label="Automatisch sperren"
+          full
+          size="sm"
+          value={settings.autoLockMinutes}
+          onChange={(v) => onSettingsChange({ ...settings, autoLockMinutes: v })}
+          options={LOCK_OPTIONS}
+        />
       </div>
 
       <label className="toggle-row">
@@ -133,7 +123,7 @@ function SecurityTab({
         </span>
         <span className="toggle-text">
           <span className="toggle-title">Beim Minimieren sperren</span>
-          <span className="toggle-sub">Sobald das Fenster in die Taskleiste geht.</span>
+          <span className="toggle-sub">Schließen schickt Tresor in den Infobereich und sperrt immer.</span>
         </span>
         <input
           type="checkbox"
@@ -423,5 +413,100 @@ function PasswordTab() {
         </button>
       </div>
     </form>
+  );
+}
+
+/* ── Info & Updates ───────────────────────── */
+
+function InfoTab() {
+  const [version, setVersion] = useState("…");
+  const [state, setState] = useState<"idle" | "checking" | "none" | "found" | "installing" | "error">("idle");
+  const [update, setUpdate] = useState<AvailableUpdate | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    appVersion().then(setVersion).catch(() => setVersion("?"));
+  }, []);
+
+  async function check() {
+    setState("checking");
+    setError(null);
+    try {
+      const u = await checkForUpdate();
+      setUpdate(u);
+      setState(u ? "found" : "none");
+    } catch (e) {
+      setError(errorText(e));
+      setState("error");
+    }
+  }
+
+  async function install() {
+    if (!update) return;
+    setState("installing");
+    try {
+      await update.install(setProgress);
+    } catch (e) {
+      setError(errorText(e));
+      setState("error");
+    }
+  }
+
+  return (
+    <div className="settings-tab">
+      <div className="about">
+        <div className="brand-mark brand-mark--lg">
+          <KeyRound size={22} strokeWidth={2.2} />
+        </div>
+        <div className="toggle-text">
+          <span className="toggle-title">Tresor</span>
+          <span className="toggle-sub">Version {version}</span>
+        </div>
+      </div>
+
+      <div className="setting-block">
+        <div className="setting-head">
+          <span className="toggle-icon">
+            <Sparkles size={18} />
+          </span>
+          <span className="toggle-text">
+            <span className="toggle-title">
+              {state === "found" && update
+                ? `Version ${update.version} ist da`
+                : state === "none"
+                  ? "Du hast die neueste Version"
+                  : state === "installing"
+                    ? "Update wird installiert…"
+                    : "Updates"}
+            </span>
+            <span className="toggle-sub">
+              {state === "installing"
+                ? "Tresor startet danach neu. Dein Tresor bleibt unverändert."
+                : "Tresor sucht beim Entsperren automatisch nach neuen Versionen."}
+            </span>
+          </span>
+        </div>
+        {state === "installing" && (
+          <div className="progress">
+            <span style={{ transform: `scaleX(${progress})` }} />
+          </div>
+        )}
+        {error && <p className="form-error" data-visible>{error}</p>}
+        <div className="modal-foot modal-foot--end">
+          {state === "found" ? (
+            <button className="primary-btn" onClick={install}>
+              <Download size={15} />
+              Jetzt aktualisieren
+            </button>
+          ) : (
+            <button className="ghost-btn ghost-btn--boxed" onClick={check} disabled={state === "checking" || state === "installing"}>
+              <RefreshCw size={14} className={state === "checking" ? "spin" : undefined} />
+              Nach Updates suchen
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

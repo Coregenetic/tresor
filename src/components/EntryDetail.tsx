@@ -1,5 +1,6 @@
-import { Eye, EyeOff, ExternalLink, Pencil, Plus, Star } from "lucide-react";
+import { CalendarClock, Eye, EyeOff, ExternalLink, Pencil, Plus, Star } from "lucide-react";
 import { useState } from "react";
+import { contractLabel, CONTRACT_REMINDER_DAYS, daysUntil, formatDate, formatIban } from "../lib/format";
 import { openExternal } from "../lib/open";
 import { CATEGORY_LABEL, type Entry, type Member } from "../lib/types";
 import { Avatar } from "./Avatar";
@@ -25,12 +26,24 @@ function relative(iso: string) {
   return months === 1 ? "vor einem Monat" : `vor ${months} Monaten`;
 }
 
-function Field({ label, value, mono, onUsed }: { label: string; value: string; mono?: boolean; onUsed: () => void }) {
+function Field({
+  label,
+  value,
+  display,
+  mono,
+  onUsed,
+}: {
+  label: string;
+  value: string;
+  display?: string;
+  mono?: boolean;
+  onUsed: () => void;
+}) {
   return (
     <div className="field">
       <div className="field-label">{label}</div>
       <div className="field-row">
-        <div className={mono ? "field-value field-value--mono" : "field-value"}>{value}</div>
+        <div className={mono ? "field-value field-value--mono" : "field-value"}>{display ?? value}</div>
         <div className="field-actions">
           <CopyButton value={value} label={label} onCopied={onUsed} />
         </div>
@@ -39,11 +52,11 @@ function Field({ label, value, mono, onUsed }: { label: string; value: string; m
   );
 }
 
-function PasswordField({ value, onUsed }: { value: string; onUsed: () => void }) {
+function PasswordField({ value, onUsed, label = "Passwort" }: { value: string; onUsed: () => void; label?: string }) {
   const [shown, setShown] = useState(false);
   return (
     <div className="field">
-      <div className="field-label">Passwort</div>
+      <div className="field-label">{label}</div>
       <div className="field-row">
         <div className="field-value field-value--mono">
           <span className="swap swap--text" data-state={shown ? "b" : "a"}>
@@ -55,12 +68,12 @@ function PasswordField({ value, onUsed }: { value: string; onUsed: () => void })
           <button
             className="icon-btn"
             onClick={() => setShown((s) => !s)}
-            aria-label={shown ? "Passwort verbergen" : "Passwort anzeigen"}
+            aria-label={shown ? `${label} verbergen` : `${label} anzeigen`}
             title={shown ? "Verbergen" : "Anzeigen"}
           >
             {shown ? <EyeOff size={15} strokeWidth={1.8} /> : <Eye size={15} strokeWidth={1.8} />}
           </button>
-          <CopyButton value={value} label="Passwort" onCopied={onUsed} />
+          <CopyButton value={value} label={label} onCopied={onUsed} />
         </div>
       </div>
     </div>
@@ -88,7 +101,9 @@ export function EntryDetail({ entry, members, isEmptyVault, onEdit, onNew, onTog
   }
 
   const owners = members.filter((m) => entry.memberIds.includes(m.id));
-  const hasCredentials = entry.username || entry.password || entry.customerNumber || entry.url;
+  const hasCredentials =
+    entry.username || entry.password || entry.customerNumber || entry.url || entry.pin || entry.iban;
+  const contractDays = entry.contractEnd ? daysUntil(entry.contractEnd) : null;
 
   return (
     // key = Eintrag-ID: Beim Wechsel wird das Passwort automatisch wieder verborgen
@@ -126,6 +141,8 @@ export function EntryDetail({ entry, members, isEmptyVault, onEdit, onNew, onTog
           )}
           {entry.password && <PasswordField value={entry.password} onUsed={onUsed} />}
           {entry.customerNumber && <Field label="Kundennummer" value={entry.customerNumber} mono onUsed={onUsed} />}
+          {entry.pin && <PasswordField label="PIN" value={entry.pin} onUsed={onUsed} />}
+          {entry.iban && <Field label="IBAN" value={entry.iban} display={formatIban(entry.iban)} mono onUsed={onUsed} />}
           {entry.url && (
             <div className="field">
               <div className="field-label">Website</div>
@@ -147,6 +164,29 @@ export function EntryDetail({ entry, members, isEmptyVault, onEdit, onNew, onTog
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {entry.contractEnd && contractDays !== null && (
+        <div
+          className="contract-card"
+          data-tone={contractDays < 0 ? "past" : contractDays <= CONTRACT_REMINDER_DAYS ? "soon" : "ok"}
+        >
+          <span className="contract-icon">
+            <CalendarClock size={18} />
+          </span>
+          <span className="toggle-text">
+            <span className="toggle-title">Vertragsende {formatDate(entry.contractEnd)}</span>
+            <span className="toggle-sub">{contractLabel(contractDays)}</span>
+          </span>
+        </div>
+      )}
+
+      {entry.questions && entry.questions.length > 0 && (
+        <div className="card">
+          {entry.questions.map((qa, i) => (
+            <PasswordField key={i} label={qa.q || "Sicherheitsfrage"} value={qa.a} onUsed={onUsed} />
+          ))}
         </div>
       )}
 

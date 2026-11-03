@@ -8,6 +8,10 @@ export const DEMO_MEMBERS: Member[] = [
 ];
 
 const d = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+const inDays = (n: number) => {
+  const t = new Date(Date.now() + n * 86_400_000);
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+};
 const m = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
 
 export const DEMO_ENTRIES: Entry[] = [
@@ -20,7 +24,9 @@ export const DEMO_ENTRIES: Entry[] = [
     password: "Kx7!mPq2#vLs9",
     customerNumber: "551 234 8890",
     url: "https://www.telekom.de/kundencenter",
-    notes: "Festnetz + Internet. Vertrag läuft bis 08/2027.",
+    notes: "Festnetz + Internet, MagentaZuhause L.",
+    contractEnd: inDays(18),
+    questions: [{ q: "Lieblingsstadt", a: "Lissabon" }],
     memberIds: ["m1", "m2"],
     favorite: true,
     updatedAt: d(3),
@@ -76,6 +82,7 @@ export const DEMO_ENTRIES: Entry[] = [
     category: "login",
     username: "ben@example.de",
     password: "vB3$nK8!xQ1zr",
+    pin: "4821",
     memberIds: ["m2"],
     favorite: true,
     updatedAt: d(2),
@@ -118,6 +125,8 @@ export const DEMO_ENTRIES: Entry[] = [
     domain: "vodafone.de",
     category: "kundennummer",
     customerNumber: "118 663 205",
+    contractEnd: inDays(5),
+    iban: "DE89370400440532013000",
     memberIds: ["m1"],
     updatedAt: d(120),
   },
