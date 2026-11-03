@@ -7,6 +7,7 @@ import { ProviderLogo } from "./ProviderLogo";
 interface Props {
   title: string;
   entries: Entry[];
+  isEmptyVault: boolean;
   members: Member[];
   selectedId?: string;
   onSelect: (id: string) => void;
@@ -20,7 +21,7 @@ function subtitle(e: Entry) {
   return e.username ?? e.customerNumber ?? e.domain ?? "";
 }
 
-export function EntryList({ title, entries, members, selectedId, onSelect, query, onQuery, searchRef }: Props) {
+export function EntryList({ title, entries, isEmptyVault, members, selectedId, onSelect, query, onQuery, searchRef }: Props) {
   const byId = new Map(members.map((m) => [m.id, m]));
 
   return (
@@ -47,12 +48,18 @@ export function EntryList({ title, entries, members, selectedId, onSelect, query
       </header>
 
       <div className="list-scroll" role="listbox" aria-label="Einträge">
-        {entries.length === 0 && (
-          <div className="empty">
-            <p>Keine Einträge gefunden.</p>
-            {query && <span>Andere Schreibweise oder Filter probieren.</span>}
-          </div>
-        )}
+        {entries.length === 0 &&
+          (isEmptyVault ? (
+            <div className="empty">
+              <p>Dein Tresor ist noch leer.</p>
+              <span>Einträge anlegen kommt mit dem nächsten Update.</span>
+            </div>
+          ) : (
+            <div className="empty">
+              <p>Keine Einträge gefunden.</p>
+              {query && <span>Andere Schreibweise oder Filter probieren.</span>}
+            </div>
+          ))}
         {entries.map((e) => (
           <button
             key={e.id}

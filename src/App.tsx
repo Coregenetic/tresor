@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Toaster } from "sonner";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Toaster, toast } from "sonner";
 import { EntryDetail } from "./components/EntryDetail";
 import { EntryList } from "./components/EntryList";
 import { LockScreen } from "./components/LockScreen";
+import { SetupScreen } from "./components/SetupScreen";
 import { Sidebar, type Filter } from "./components/Sidebar";
-import { DEMO_ENTRIES, DEMO_MEMBERS } from "./lib/demo";
+import { api, errorText, type VaultData, type VaultStatus } from "./lib/api";
 import type { Category, Entry } from "./lib/types";
 
 type Theme = "light" | "dark";
+type Phase = "loading" | "setup" | "locked" | "unlocked" | "error";
 
 function initialTheme(): Theme {
   try {
@@ -29,15 +31,32 @@ function matches(e: Entry, q: string) {
 }
 
 export default function App() {
-  const [locked, setLocked] = useState(true);
+  const [phase, setPhase] = useState<Phase>("loading");
+  const [status, setStatus] = useState<VaultStatus | null>(null);
+  const [fatal, setFatal] = useState<string | null>(null);
+  const [data, setData] = useState<VaultData | null>(null);
+  const [firstLock, setFirstLock] = useState(true);
+  const pending = useRef<VaultData | null>(null);
+
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const members = DEMO_MEMBERS;
-  const entries = DEMO_ENTRIES;
+  // Startzustand ermitteln
+  useEffect(() => {
+    api
+      .status()
+      .then((s) => {
+        setStatus(s);
+        setPhase(s.exists ? "locked" : "setup");
+      })
+      .catch((e) => {
+        setFatal(errorText(e));
+        setPhase("error");
+      });
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -47,6 +66,19 @@ export default function App() {
       /* ignorieren */
     }
   }, [theme]);
+
+  const lock = useCallback(async () => {
+    await api.lock().catch(() => undefined);
+    setData(null);
+    setQuery("");
+    setSelectedId(undefined);
+    setFirstLock(false);
+    setStatus(await api.status().catch(() => status));
+    setPhase("locked");
+  }, [status]);
+
+  const members = data?.members ?? [];
+  const entries = data?.entries ?? [];
 
   const counts = useMemo(() => {
     const category = { login: 0, kundennummer: 0, wlan: 0, notiz: 0 } as Record<Category, number>;
@@ -74,14 +106,13 @@ export default function App() {
     return list.filter((e) => matches(e, query.trim())).sort((a, b) => a.title.localeCompare(b.title, "de"));
   }, [entries, filter, query]);
 
-  // Auswahl gültig halten, wenn Filter/Suche den Eintrag ausblenden
   useEffect(() => {
     if (!visible.some((e) => e.id === selectedId)) setSelectedId(visible[0]?.id);
   }, [visible, selectedId]);
 
   // Tastatur: Strg+F Suche, Strg+L sperren, Pfeile in der Liste – bewusst ohne Animation
   useEffect(() => {
-    if (locked) return;
+    if (phase !== "unlocked") return;
     function onKey(ev: KeyboardEvent) {
       const mod = ev.ctrlKey || ev.metaKey;
       if (mod && (ev.key === "f" || ev.key === "k")) {
@@ -90,14 +121,16 @@ export default function App() {
         searchRef.current?.select();
       } else if (mod && ev.key === "l") {
         ev.preventDefault();
-        setLocked(true);
+        lock();
       } else if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
         const i = visible.findIndex((e) => e.id === selectedId);
         const next = ev.key === "ArrowDown" ? Math.min(i + 1, visible.length - 1) : Math.max(i - 1, 0);
         if (visible[next]) {
           ev.preventDefault();
           setSelectedId(visible[next].id);
-          document.querySelector(`[aria-selected="true"]`)?.scrollIntoView({ block: "nearest" });
+          requestAnimationFrame(() =>
+            document.querySelector(`[aria-selected="true"]`)?.scrollIntoView({ block: "nearest" }),
+          );
         }
       } else if (ev.key === "Escape" && document.activeElement === searchRef.current) {
         setQuery("");
@@ -106,7 +139,7 @@ export default function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [locked, visible, selectedId]);
+  }, [phase, visible, selectedId, lock]);
 
   const listTitle =
     filter.kind === "all"
@@ -117,34 +150,89 @@ export default function App() {
           ? (members.find((m) => m.id === filter.memberId)?.name ?? "")
           : { login: "Logins", kundennummer: "Kundennummern", wlan: "WLAN", notiz: "Notizen" }[filter.category];
 
+  let screen: React.ReactNode = null;
+
+  if (phase === "error") {
+    screen = (
+      <div className="lock">
+        <div className="lock-card">
+          <h1 className="lock-title">Tresor konnte nicht starten</h1>
+          <p className="lock-sub">{fatal}</p>
+        </div>
+      </div>
+    );
+  } else if (phase === "setup" && status) {
+    screen = (
+      <SetupScreen
+        helloSupported={status.helloSupported}
+        onCreate={async (password, initial, enableHello) => {
+          const result = await api.create(password, initial, enableHello);
+          pending.current = initial;
+          return result;
+        }}
+        onDone={(result) => {
+          setData(pending.current);
+          setStatus({ ...status, exists: true, unlocked: true, helloEnabled: result.helloEnabled });
+          setPhase("unlocked");
+          if (result.helloError) {
+            toast.warning("Windows Hello wurde nicht eingerichtet", {
+              description: `${result.helloError} Du kannst es später in den Einstellungen nachholen.`,
+            });
+          } else {
+            toast.success("Tresor angelegt");
+          }
+        }}
+      />
+    );
+  } else if (phase === "locked" && status) {
+    screen = (
+      <LockScreen
+        helloEnabled={status.helloEnabled}
+        autoHello={firstLock}
+        onUnlockHello={async () => {
+          pending.current = await api.unlockWithHello();
+        }}
+        onUnlockPassword={async (pw) => {
+          pending.current = await api.unlockWithPassword(pw);
+        }}
+        onUnlocked={() => {
+          setData(pending.current);
+          pending.current = null;
+          setPhase("unlocked");
+        }}
+      />
+    );
+  } else if (phase === "unlocked" && data) {
+    screen = (
+      <div className="shell">
+        <Sidebar
+          members={members}
+          filter={filter}
+          onFilter={setFilter}
+          counts={counts}
+          onLock={lock}
+          theme={theme}
+          onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        />
+        <EntryList
+          title={listTitle}
+          entries={visible}
+          isEmptyVault={entries.length === 0}
+          members={members}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          query={query}
+          onQuery={setQuery}
+          searchRef={searchRef}
+        />
+        <EntryDetail entry={entries.find((e) => e.id === selectedId)} members={members} />
+      </div>
+    );
+  }
+
   return (
     <>
-      {locked ? (
-        <LockScreen onUnlock={() => setLocked(false)} />
-      ) : (
-        <div className="shell">
-          <Sidebar
-            members={members}
-            filter={filter}
-            onFilter={setFilter}
-            counts={counts}
-            onLock={() => setLocked(true)}
-            theme={theme}
-            onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-          />
-          <EntryList
-            title={listTitle}
-            entries={visible}
-            members={members}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            query={query}
-            onQuery={setQuery}
-            searchRef={searchRef}
-          />
-          <EntryDetail entry={entries.find((e) => e.id === selectedId)} members={members} />
-        </div>
-      )}
+      {screen}
       <Toaster position="bottom-right" theme={theme} toastOptions={{ className: "toast" }} />
     </>
   );
