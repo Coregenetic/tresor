@@ -1,4 +1,4 @@
-import { KeyRound, Hash, Layers, Lock, Moon, Star, StickyNote, Sun, Wifi } from "lucide-react";
+import { Hash, KeyRound, Layers, Lock, Moon, Pencil, Plus, Settings, Star, StickyNote, Sun, Wifi } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Category, Member } from "../lib/types";
 import { Avatar } from "./Avatar";
@@ -15,13 +15,19 @@ interface Props {
   onFilter: (f: Filter) => void;
   counts: { all: number; favorites: number; category: Record<Category, number>; member: Record<string, number> };
   onLock: () => void;
+  onSettings: () => void;
+  onAddMember: () => void;
+  onEditMember: (m: Member) => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
 }
 
 const same = (a: Filter, b: Filter) => JSON.stringify(a) === JSON.stringify(b);
 
-export function Sidebar({ members, filter, onFilter, counts, onLock, theme, onToggleTheme }: Props) {
+export function Sidebar(props: Props) {
+  const { members, filter, onFilter, counts, onLock, onSettings, onAddMember, onEditMember, theme, onToggleTheme } =
+    props;
+
   const Item = ({ f, icon, label, count }: { f: Filter; icon: ReactNode; label: string; count: number }) => (
     <button className="nav-item" data-active={same(f, filter) || undefined} onClick={() => onFilter(f)}>
       <span className="nav-icon">{icon}</span>
@@ -44,22 +50,44 @@ export function Sidebar({ members, filter, onFilter, counts, onLock, theme, onTo
         <Item f={{ kind: "favorites" }} icon={<Star size={15} />} label="Favoriten" count={counts.favorites} />
       </nav>
 
-      <div className="nav-section">Familie</div>
+      <div className="nav-section nav-section--action">
+        <span>Familie</span>
+        <button className="mini-btn" onClick={onAddMember} aria-label="Person hinzufügen" title="Person hinzufügen">
+          <Plus size={13} strokeWidth={2.4} />
+        </button>
+      </div>
       <nav className="nav">
         {members.map((m) => (
-          <button
-            key={m.id}
-            className="nav-item"
-            data-active={same({ kind: "member", memberId: m.id }, filter) || undefined}
-            onClick={() => onFilter({ kind: "member", memberId: m.id })}
-          >
-            <span className="nav-icon">
-              <Avatar member={m} size={18} />
-            </span>
-            <span className="nav-label">{m.name}</span>
-            <span className="nav-count">{counts.member[m.id] ?? 0}</span>
-          </button>
+          <div key={m.id} className="nav-row">
+            <button
+              className="nav-item"
+              data-active={same({ kind: "member", memberId: m.id }, filter) || undefined}
+              onClick={() => onFilter({ kind: "member", memberId: m.id })}
+            >
+              <span className="nav-icon">
+                <Avatar member={m} size={18} />
+              </span>
+              <span className="nav-label">{m.name}</span>
+              <span className="nav-count">{counts.member[m.id] ?? 0}</span>
+            </button>
+            <button
+              className="mini-btn nav-edit"
+              onClick={() => onEditMember(m)}
+              aria-label={`${m.name} bearbeiten`}
+              title="Bearbeiten"
+            >
+              <Pencil size={12} />
+            </button>
+          </div>
         ))}
+        {members.length === 0 && (
+          <button className="nav-item nav-item--hint" onClick={onAddMember}>
+            <span className="nav-icon">
+              <Plus size={14} />
+            </span>
+            <span className="nav-label">Person hinzufügen</span>
+          </button>
+        )}
       </nav>
 
       <div className="nav-section">Kategorien</div>
@@ -75,9 +103,14 @@ export function Sidebar({ members, filter, onFilter, counts, onLock, theme, onTo
           <Lock size={14} />
           Sperren
         </button>
-        <button className="icon-btn" onClick={onToggleTheme} aria-label="Farbschema wechseln" title="Farbschema wechseln">
-          {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-        </button>
+        <div className="sidebar-foot-icons">
+          <button className="icon-btn" onClick={onSettings} aria-label="Einstellungen" title="Einstellungen">
+            <Settings size={15} />
+          </button>
+          <button className="icon-btn" onClick={onToggleTheme} aria-label="Farbschema wechseln" title="Farbschema wechseln">
+            {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
+        </div>
       </div>
     </aside>
   );

@@ -1,10 +1,10 @@
 import type { Entry, Member } from "./types";
 
-/** Nur Beispieldaten für Etappe 1 – ab Etappe 2 kommt alles aus dem verschlüsselten Tresor. */
+/** Neutrale Beispieldaten – nur für die Browser-Vorschau (npm run dev), nie in der App. */
 export const DEMO_MEMBERS: Member[] = [
-  { id: "m1", name: "Patrick", hue: 228 },
-  { id: "m2", name: "Franziska", hue: 340 },
-  { id: "m3", name: "Kind", hue: 150 },
+  { id: "m1", name: "Anna", hue: 228 },
+  { id: "m2", name: "Ben", hue: 340 },
+  { id: "m3", name: "Mia", hue: 150 },
 ];
 
 const d = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString();
@@ -29,7 +29,7 @@ export const DEMO_ENTRIES: Entry[] = [
     title: "Amazon",
     domain: "amazon.de",
     category: "login",
-    username: "patrick@example.de",
+    username: "anna@example.de",
     password: "w9!Rt4zQ@hN2e",
     url: "https://www.amazon.de",
     memberIds: ["m1"],
@@ -38,11 +38,10 @@ export const DEMO_ENTRIES: Entry[] = [
   },
   {
     id: "e3",
-    title: "Stadtwerke Eutin",
-    domain: "stadtwerke-eutin.de",
+    title: "Stadtwerke Musterstadt",
     category: "kundennummer",
     customerNumber: "2004 7781 03",
-    username: "franziska@example.de",
+    username: "ben@example.de",
     password: "Sonne-Kreide-42",
     memberIds: ["m1", "m2"],
     updatedAt: d(40),
@@ -62,7 +61,7 @@ export const DEMO_ENTRIES: Entry[] = [
     title: "Antolin",
     domain: "antolin.de",
     category: "login",
-    username: "kind.schule",
+    username: "mia.lesen",
     password: "Buch-Drache-9",
     notes: "Lese-Plattform der Schule.",
     memberIds: ["m3"],
@@ -73,7 +72,7 @@ export const DEMO_ENTRIES: Entry[] = [
     title: "PayPal",
     domain: "paypal.com",
     category: "login",
-    username: "franziska@example.de",
+    username: "ben@example.de",
     password: "vB3$nK8!xQ1zr",
     memberIds: ["m2"],
     updatedAt: d(2),
@@ -84,7 +83,7 @@ export const DEMO_ENTRIES: Entry[] = [
     domain: "aok.de",
     category: "kundennummer",
     customerNumber: "K 829 114 507",
-    username: "patrick@example.de",
+    username: "anna@example.de",
     password: "Gesund!Bleiben3",
     memberIds: ["m1"],
     updatedAt: d(60),
@@ -103,7 +102,7 @@ export const DEMO_ENTRIES: Entry[] = [
     title: "Spotify",
     domain: "spotify.com",
     category: "login",
-    username: "franziska@example.de",
+    username: "ben@example.de",
     password: "Musik&Kaffee55",
     memberIds: ["m2"],
     updatedAt: d(8),

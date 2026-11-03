@@ -11,6 +11,7 @@ interface Props {
   members: Member[];
   selectedId?: string;
   onSelect: (id: string) => void;
+  onNew: () => void;
   query: string;
   onQuery: (q: string) => void;
   searchRef: RefObject<HTMLInputElement | null>;
@@ -21,7 +22,7 @@ function subtitle(e: Entry) {
   return e.username ?? e.customerNumber ?? e.domain ?? "";
 }
 
-export function EntryList({ title, entries, isEmptyVault, members, selectedId, onSelect, query, onQuery, searchRef }: Props) {
+export function EntryList({ title, entries, isEmptyVault, members, selectedId, onSelect, onNew, query, onQuery, searchRef }: Props) {
   const byId = new Map(members.map((m) => [m.id, m]));
 
   return (
@@ -29,7 +30,7 @@ export function EntryList({ title, entries, isEmptyVault, members, selectedId, o
       <header className="list-head">
         <div className="list-title-row">
           <h1 className="list-title">{title}</h1>
-          <button className="primary-btn primary-btn--sm" title="Neuer Eintrag (kommt in Etappe 3)">
+          <button className="primary-btn primary-btn--sm" onClick={onNew} title="Neuer Eintrag (Strg+N)">
             <Plus size={14} strokeWidth={2.4} />
             Neu
           </button>
@@ -52,7 +53,7 @@ export function EntryList({ title, entries, isEmptyVault, members, selectedId, o
           (isEmptyVault ? (
             <div className="empty">
               <p>Dein Tresor ist noch leer.</p>
-              <span>Einträge anlegen kommt mit dem nächsten Update.</span>
+              <span>Mit „Neu“ legst du den ersten Zugang an.</span>
             </div>
           ) : (
             <div className="empty">

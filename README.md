@@ -6,7 +6,7 @@ Lokaler Passwort- und Kundennummern-Tresor für die Familie. Windows-Desktop-App
 
 - **Etappe 1 (fertig):** Gerüst, Design-System, Oberfläche
 - **Etappe 2 (fertig):** Rust-Kern – Verschlüsselung (AES-256-GCM, Argon2id), Windows Hello (TPM), Master-Passwort, Ersteinrichtung
-- Etappe 3: Einträge anlegen/bearbeiten, Familienprofile verwalten
+- **Etappe 3 (fertig):** Einträge anlegen/bearbeiten/löschen, Familie verwalten, Einstellungen (Hello, Master-Passwort)
 - Etappe 4: Passwort-Generator, Auto-Sperre, Zwischenablage-Timeout, Export/Import
 - Etappe 5: Feinschliff, Release
 

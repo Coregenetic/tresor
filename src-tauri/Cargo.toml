@@ -1,6 +1,6 @@
 [package]
 name = "tresor"
-version = "0.2.0"
+version = "0.3.0"
 description = "Lokaler Familien-Tresor"
 authors = ["Patrick Luckfiel"]
 edition = "2024"

@@ -14,7 +14,12 @@ function hueFor(text: string) {
   return h;
 }
 
-export function ProviderLogo({ title, domain, size = 32 }: Props) {
+/** Bei geänderter Domain neu laden (key setzt den Ladezustand zurück). */
+export function ProviderLogo(props: Props) {
+  return <LogoInner key={props.domain ?? ""} {...props} />;
+}
+
+function LogoInner({ title, domain, size = 32 }: Props) {
   const [state, setState] = useState<"loading" | "ok" | "fallback">(domain ? "loading" : "fallback");
   const radius = Math.round(size * 0.26);
 

@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 import { EntryDetail } from "./components/EntryDetail";
+import { EntryEditor } from "./components/EntryEditor";
 import { EntryList } from "./components/EntryList";
 import { LockScreen } from "./components/LockScreen";
+import { MEMBER_HUES, MemberDialog } from "./components/MemberDialog";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupScreen } from "./components/SetupScreen";
 import { Sidebar, type Filter } from "./components/Sidebar";
 import { api, errorText, type VaultData, type VaultStatus } from "./lib/api";
-import type { Category, Entry } from "./lib/types";
+import type { Category, Entry, Member } from "./lib/types";
 
 type Theme = "light" | "dark";
 type Phase = "loading" | "setup" | "locked" | "unlocked" | "error";
+type Editing = null | { id?: string };
+type Dialog = null | { kind: "settings" } | { kind: "member"; member?: Member };
 
 function initialTheme(): Theme {
   try {
@@ -30,6 +35,24 @@ function matches(e: Entry, q: string) {
     .every((w) => hay.includes(w));
 }
 
+function passesFilter(e: Entry, filter: Filter) {
+  switch (filter.kind) {
+    case "favorites":
+      return !!e.favorite;
+    case "category":
+      return e.category === filter.category;
+    case "member":
+      return e.memberIds.includes(filter.memberId);
+    default:
+      return true;
+  }
+}
+
+function isTyping(target: EventTarget | null) {
+  const el = target as HTMLElement | null;
+  return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+}
+
 export default function App() {
   const [phase, setPhase] = useState<Phase>("loading");
   const [status, setStatus] = useState<VaultStatus | null>(null);
@@ -37,11 +60,14 @@ export default function App() {
   const [data, setData] = useState<VaultData | null>(null);
   const [firstLock, setFirstLock] = useState(true);
   const pending = useRef<VaultData | null>(null);
+  const saveChain = useRef<Promise<unknown>>(Promise.resolve());
 
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | undefined>();
+  const [editing, setEditing] = useState<Editing>(null);
+  const [dialog, setDialog] = useState<Dialog>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Startzustand ermitteln
@@ -67,11 +93,22 @@ export default function App() {
     }
   }, [theme]);
 
+  /** Änderungen sofort anzeigen und der Reihe nach verschlüsselt speichern. */
+  const persist = useCallback((next: VaultData) => {
+    setData(next);
+    saveChain.current = saveChain.current
+      .then(() => api.save(next))
+      .catch((e) => toast.error("Speichern fehlgeschlagen", { description: errorText(e) }));
+  }, []);
+
   const lock = useCallback(async () => {
+    await saveChain.current; // nichts verlieren, was noch gespeichert wird
     await api.lock().catch(() => undefined);
     setData(null);
     setQuery("");
     setSelectedId(undefined);
+    setEditing(null);
+    setDialog(null);
     setFirstLock(false);
     setStatus(await api.status().catch(() => status));
     setPhase("locked");
@@ -90,39 +127,109 @@ export default function App() {
     return { all: entries.length, favorites: entries.filter((e) => e.favorite).length, category, member };
   }, [entries]);
 
-  const visible = useMemo(() => {
-    const list = entries.filter((e) => {
-      switch (filter.kind) {
-        case "favorites":
-          return e.favorite;
-        case "category":
-          return e.category === filter.category;
-        case "member":
-          return e.memberIds.includes(filter.memberId);
-        default:
-          return true;
-      }
-    });
-    return list.filter((e) => matches(e, query.trim())).sort((a, b) => a.title.localeCompare(b.title, "de"));
-  }, [entries, filter, query]);
+  const visible = useMemo(
+    () =>
+      entries
+        .filter((e) => passesFilter(e, filter) && matches(e, query.trim()))
+        .sort((a, b) => a.title.localeCompare(b.title, "de")),
+    [entries, filter, query],
+  );
 
   useEffect(() => {
+    if (editing?.id === undefined && editing) return; // neuer Eintrag: Auswahl nicht anfassen
     if (!visible.some((e) => e.id === selectedId)) setSelectedId(visible[0]?.id);
-  }, [visible, selectedId]);
+  }, [visible, selectedId, editing]);
 
-  // Tastatur: Strg+F Suche, Strg+L sperren, Pfeile in der Liste – bewusst ohne Animation
+  // ── Einträge ───────────────────────────────
+
+  function saveEntry(entry: Entry) {
+    if (!data) return;
+    const exists = data.entries.some((e) => e.id === entry.id);
+    const nextEntries = exists ? data.entries.map((e) => (e.id === entry.id ? entry : e)) : [...data.entries, entry];
+    persist({ ...data, entries: nextEntries });
+    if (!passesFilter(entry, filter)) setFilter({ kind: "all" });
+    if (!matches(entry, query.trim())) setQuery("");
+    setSelectedId(entry.id);
+    setEditing(null);
+    toast.success(exists ? "Gespeichert" : `${entry.title} angelegt`);
+  }
+
+  function deleteEntry(id: string) {
+    if (!data) return;
+    const entry = data.entries.find((e) => e.id === id);
+    persist({ ...data, entries: data.entries.filter((e) => e.id !== id) });
+    setEditing(null);
+    setSelectedId(undefined);
+    toast(`${entry?.title ?? "Eintrag"} gelöscht`);
+  }
+
+  function toggleFavorite(id: string) {
+    if (!data) return;
+    persist({
+      ...data,
+      entries: data.entries.map((e) => (e.id === id ? { ...e, favorite: e.favorite ? undefined : true } : e)),
+    });
+  }
+
+  const startNew = useCallback(() => {
+    setDialog(null);
+    setEditing({});
+  }, []);
+
+  // ── Familie ────────────────────────────────
+
+  function saveMember(member: Member) {
+    if (!data) return;
+    const exists = data.members.some((m) => m.id === member.id);
+    persist({
+      ...data,
+      members: exists ? data.members.map((m) => (m.id === member.id ? member : m)) : [...data.members, member],
+    });
+    setDialog(null);
+  }
+
+  function deleteMember(id: string) {
+    if (!data) return;
+    const member = data.members.find((m) => m.id === id);
+    persist({
+      ...data,
+      members: data.members.filter((m) => m.id !== id),
+      entries: data.entries.map((e) =>
+        e.memberIds.includes(id) ? { ...e, memberIds: e.memberIds.filter((x) => x !== id) } : e,
+      ),
+    });
+    if (filter.kind === "member" && filter.memberId === id) setFilter({ kind: "all" });
+    setDialog(null);
+    toast(`${member?.name ?? "Person"} entfernt`);
+  }
+
+  // ── Tastatur (bewusst ohne Animation) ──────
+
   useEffect(() => {
     if (phase !== "unlocked") return;
     function onKey(ev: KeyboardEvent) {
+      if (dialog) return; // Dialog hat eigene Tasten
       const mod = ev.ctrlKey || ev.metaKey;
-      if (mod && (ev.key === "f" || ev.key === "k")) {
+      const key = ev.key.toLowerCase();
+
+      if (mod && key === "l") {
+        ev.preventDefault();
+        lock();
+        return;
+      }
+      if (editing) return; // Editor kümmert sich um Strg+S / Esc
+
+      if (mod && (key === "f" || key === "k")) {
         ev.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
-      } else if (mod && ev.key === "l") {
+      } else if (mod && key === "n") {
         ev.preventDefault();
-        lock();
-      } else if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        startNew();
+      } else if (mod && key === "e" && selectedId) {
+        ev.preventDefault();
+        setEditing({ id: selectedId });
+      } else if ((ev.key === "ArrowDown" || ev.key === "ArrowUp") && (!isTyping(ev.target) || ev.target === searchRef.current)) {
         const i = visible.findIndex((e) => e.id === selectedId);
         const next = ev.key === "ArrowDown" ? Math.min(i + 1, visible.length - 1) : Math.max(i - 1, 0);
         if (visible[next]) {
@@ -132,14 +239,18 @@ export default function App() {
             document.querySelector(`[aria-selected="true"]`)?.scrollIntoView({ block: "nearest" }),
           );
         }
-      } else if (ev.key === "Escape" && document.activeElement === searchRef.current) {
+      } else if (ev.key === "Enter" && ev.target === searchRef.current && selectedId) {
+        searchRef.current?.blur();
+      } else if (ev.key === "Escape" && ev.target === searchRef.current) {
         setQuery("");
         searchRef.current?.blur();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, visible, selectedId, lock]);
+  }, [phase, visible, selectedId, lock, editing, dialog, startNew]);
+
+  // ── Ansicht ────────────────────────────────
 
   const listTitle =
     filter.kind === "all"
@@ -149,6 +260,9 @@ export default function App() {
         : filter.kind === "member"
           ? (members.find((m) => m.id === filter.memberId)?.name ?? "")
           : { login: "Logins", kundennummer: "Kundennummern", wlan: "WLAN", notiz: "Notizen" }[filter.category];
+
+  const selectedEntry = entries.find((e) => e.id === selectedId);
+  const editingEntry = editing?.id ? entries.find((e) => e.id === editing.id) : undefined;
 
   let screen: React.ReactNode = null;
 
@@ -208,9 +322,15 @@ export default function App() {
         <Sidebar
           members={members}
           filter={filter}
-          onFilter={setFilter}
+          onFilter={(f) => {
+            setEditing(null);
+            setFilter(f);
+          }}
           counts={counts}
           onLock={lock}
+          onSettings={() => setDialog({ kind: "settings" })}
+          onAddMember={() => setDialog({ kind: "member" })}
+          onEditMember={(m) => setDialog({ kind: "member", member: m })}
           theme={theme}
           onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         />
@@ -219,13 +339,56 @@ export default function App() {
           entries={visible}
           isEmptyVault={entries.length === 0}
           members={members}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
+          selectedId={editing && !editing.id ? undefined : selectedId}
+          onSelect={(id) => {
+            setEditing(null);
+            setSelectedId(id);
+          }}
+          onNew={startNew}
           query={query}
           onQuery={setQuery}
           searchRef={searchRef}
         />
-        <EntryDetail entry={entries.find((e) => e.id === selectedId)} members={members} />
+        {editing ? (
+          <EntryEditor
+            key={editing.id ?? "new"}
+            entry={editingEntry}
+            members={members}
+            defaultMemberIds={filter.kind === "member" ? [filter.memberId] : []}
+            onSave={saveEntry}
+            onCancel={() => setEditing(null)}
+            onDelete={editingEntry ? () => deleteEntry(editingEntry.id) : undefined}
+          />
+        ) : (
+          <EntryDetail
+            entry={selectedEntry}
+            members={members}
+            isEmptyVault={entries.length === 0}
+            onEdit={() => selectedEntry && setEditing({ id: selectedEntry.id })}
+            onNew={startNew}
+            onToggleFavorite={() => selectedEntry && toggleFavorite(selectedEntry.id)}
+          />
+        )}
+
+        {dialog?.kind === "member" && (
+          <MemberDialog
+            member={dialog.member}
+            existingNames={members.map((m) => m.name)}
+            entryCount={dialog.member ? (counts.member[dialog.member.id] ?? 0) : 0}
+            suggestedHue={MEMBER_HUES.find((h) => !members.some((m) => m.hue === h)) ?? MEMBER_HUES[members.length % MEMBER_HUES.length]}
+            onSave={saveMember}
+            onDelete={dialog.member ? () => deleteMember(dialog.member!.id) : undefined}
+            onClose={() => setDialog(null)}
+          />
+        )}
+        {dialog?.kind === "settings" && status && (
+          <SettingsDialog
+            helloSupported={status.helloSupported}
+            helloEnabled={status.helloEnabled}
+            onHelloChanged={(on) => setStatus({ ...status, helloEnabled: on })}
+            onClose={() => setDialog(null)}
+          />
+        )}
       </div>
     );
   }
