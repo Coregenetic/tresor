@@ -1,7 +1,7 @@
 import { ArrowLeft, ArrowRight, Fingerprint, KeyRound, Plus, ShieldCheck, Users, X } from "lucide-react";
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { errorText, type CreateResult, type VaultData } from "../lib/api";
-import type { Member } from "../lib/types";
+import { DEFAULT_SETTINGS, type Member } from "../lib/types";
 import { Avatar } from "./Avatar";
 
 interface Props {
@@ -55,7 +55,7 @@ export function SetupScreen({ helloSupported, onCreate, onDone }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const result = await onCreate(pw, { version: 1, members, entries: [] }, helloSupported && useHello);
+      const result = await onCreate(pw, { version: 1, members, entries: [], settings: DEFAULT_SETTINGS }, helloSupported && useHello);
       onDone(result);
     } catch (e) {
       setError(errorText(e));

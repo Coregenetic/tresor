@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { DEMO_ENTRIES, DEMO_MEMBERS } from "./demo";
-import type { Entry, Member } from "./types";
+import { DEFAULT_SETTINGS, type Entry, type Member, type Settings } from "./types";
 
 export interface VaultData {
   version: 1;
   members: Member[];
   entries: Entry[];
+  settings: Settings;
 }
 
 export interface VaultStatus {
@@ -30,11 +31,28 @@ export interface VaultApi {
   enableHello(): Promise<void>;
   disableHello(): Promise<void>;
   changePassword(current: string, next: string): Promise<void>;
+  setLockOnMinimize(enabled: boolean): Promise<void>;
+  /** Kopiert ein Geheimnis und löscht es nach `seconds` wieder aus der Zwischenablage. */
+  copySecret(text: string, seconds: number): Promise<void>;
+  exportBackup(path: string, password: string): Promise<void>;
+  importBackup(path: string, password: string): Promise<VaultData>;
+  pickExportPath(): Promise<string | null>;
+  pickImportPath(): Promise<string | null>;
 }
 
-function normalize(raw: unknown): VaultData {
+export function normalize(raw: unknown): VaultData {
   const d = (raw ?? {}) as Partial<VaultData>;
-  return { version: 1, members: d.members ?? [], entries: d.entries ?? [] };
+  return {
+    version: 1,
+    members: d.members ?? [],
+    entries: d.entries ?? [],
+    settings: { ...DEFAULT_SETTINGS, ...(d.settings ?? {}) },
+  };
+}
+
+function backupFileName() {
+  const day = new Date().toISOString().slice(0, 10);
+  return `Tresor-Backup-${day}.tresor`;
 }
 
 /** Echte App: alles läuft über den Rust-Kern. */
@@ -48,6 +66,28 @@ const tauriApi: VaultApi = {
   enableHello: () => invoke("vault_enable_hello"),
   disableHello: () => invoke("vault_disable_hello"),
   changePassword: (current, next) => invoke("vault_change_password", { current, next }),
+  setLockOnMinimize: (enabled) => invoke("set_lock_on_minimize", { enabled }),
+  copySecret: (text, seconds) => invoke("copy_secret", { text, clearAfterSecs: seconds }),
+  exportBackup: (path, password) => invoke("vault_export", { path, password }),
+  importBackup: async (path, password) => normalize(await invoke("vault_import_read", { path, password })),
+  pickExportPath: async () => {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    return save({
+      title: "Backup speichern",
+      defaultPath: backupFileName(),
+      filters: [{ name: "Tresor-Backup", extensions: ["tresor"] }],
+    });
+  },
+  pickImportPath: async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const picked = await open({
+      title: "Backup öffnen",
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Tresor-Backup", extensions: ["tresor", "json"] }],
+    });
+    return typeof picked === "string" ? picked : null;
+  },
 };
 
 /**
@@ -61,7 +101,8 @@ function createBrowserMock(): VaultApi {
   let exists = !fresh;
   let hello = !fresh;
   let unlocked = false;
-  let stored: VaultData = { version: 1, members: DEMO_MEMBERS, entries: DEMO_ENTRIES };
+  const backups = new Map<string, { pw: string; data: VaultData }>();
+  let stored: VaultData = normalize({ members: DEMO_MEMBERS, entries: DEMO_ENTRIES });
 
   return {
     async status() {
@@ -103,6 +144,27 @@ function createBrowserMock(): VaultApi {
     async changePassword(current, next) {
       if (current !== password) throw "Falsches Master-Passwort";
       password = next;
+    },
+    async setLockOnMinimize() {},
+    async copySecret(text) {
+      await navigator.clipboard.writeText(text);
+    },
+    async exportBackup(_path, pw) {
+      await wait(500);
+      backups.set("demo-backup.tresor", { pw, data: structuredClone(stored) });
+    },
+    async importBackup(path, pw) {
+      await wait(500);
+      const b = backups.get(path);
+      if (!b) throw "Datei nicht lesbar";
+      if (b.pw !== pw) throw "Falsches Backup-Passwort";
+      return structuredClone(b.data);
+    },
+    async pickExportPath() {
+      return "demo-backup.tresor";
+    },
+    async pickImportPath() {
+      return "demo-backup.tresor";
     },
   };
 }

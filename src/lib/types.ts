@@ -23,7 +23,17 @@ export interface Entry {
   memberIds: MemberId[];
   favorite?: boolean;
   updatedAt: string; // ISO
+  /** Zuletzt kopiert/verwendet (ISO) */
+  usedAt?: string;
 }
+
+export interface Settings {
+  /** 0 = nie */
+  autoLockMinutes: number;
+  lockOnMinimize: boolean;
+}
+
+export const DEFAULT_SETTINGS: Settings = { autoLockMinutes: 5, lockOnMinimize: true };
 
 export const CATEGORY_LABEL: Record<Category, string> = {
   login: "Login",

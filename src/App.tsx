@@ -3,18 +3,22 @@ import { Toaster, toast } from "sonner";
 import { EntryDetail } from "./components/EntryDetail";
 import { EntryEditor } from "./components/EntryEditor";
 import { EntryList } from "./components/EntryList";
+import { Home } from "./components/Home";
 import { LockScreen } from "./components/LockScreen";
 import { MEMBER_HUES, MemberDialog } from "./components/MemberDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupScreen } from "./components/SetupScreen";
 import { Sidebar, type Filter } from "./components/Sidebar";
-import { api, errorText, type VaultData, type VaultStatus } from "./lib/api";
-import type { Category, Entry, Member } from "./lib/types";
+import { api, errorText, isTauri, type VaultData, type VaultStatus } from "./lib/api";
+import { analyze, ISSUE_LABEL, type HealthReport } from "./lib/health";
+import type { Category, Entry, Member, Settings } from "./lib/types";
 
 type Theme = "light" | "dark";
 type Phase = "loading" | "setup" | "locked" | "unlocked" | "error";
 type Editing = null | { id?: string };
 type Dialog = null | { kind: "settings" } | { kind: "member"; member?: Member };
+
+const HOME: Filter = { kind: "home" };
 
 function initialTheme(): Theme {
   try {
@@ -35,7 +39,7 @@ function matches(e: Entry, q: string) {
     .every((w) => hay.includes(w));
 }
 
-function passesFilter(e: Entry, filter: Filter) {
+function passesFilter(e: Entry, filter: Filter, health: HealthReport) {
   switch (filter.kind) {
     case "favorites":
       return !!e.favorite;
@@ -43,6 +47,8 @@ function passesFilter(e: Entry, filter: Filter) {
       return e.category === filter.category;
     case "member":
       return e.memberIds.includes(filter.memberId);
+    case "health":
+      return health[filter.issue].has(e.id);
     default:
       return true;
   }
@@ -63,7 +69,7 @@ export default function App() {
   const saveChain = useRef<Promise<unknown>>(Promise.resolve());
 
   const [theme, setTheme] = useState<Theme>(initialTheme);
-  const [filter, setFilter] = useState<Filter>({ kind: "all" });
+  const [filter, setFilter] = useState<Filter>(HOME);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [editing, setEditing] = useState<Editing>(null);
@@ -101,21 +107,66 @@ export default function App() {
       .catch((e) => toast.error("Speichern fehlgeschlagen", { description: errorText(e) }));
   }, []);
 
-  const lock = useCallback(async () => {
-    await saveChain.current; // nichts verlieren, was noch gespeichert wird
-    await api.lock().catch(() => undefined);
+  /** Oberfläche auf "gesperrt" zurücksetzen (der Kern ist dann schon gesperrt). */
+  const showLocked = useCallback(async () => {
     setData(null);
     setQuery("");
     setSelectedId(undefined);
     setEditing(null);
     setDialog(null);
+    setFilter(HOME);
     setFirstLock(false);
-    setStatus(await api.status().catch(() => status));
+    const s = await api.status().catch(() => null);
+    if (s) setStatus(s);
     setPhase("locked");
-  }, [status]);
+  }, []);
+
+  const lock = useCallback(async () => {
+    await saveChain.current; // nichts verlieren, was noch gespeichert wird
+    await api.lock().catch(() => undefined);
+    await showLocked();
+  }, [showLocked]);
+
+  const enterUnlocked = useCallback((next: VaultData) => {
+    setData(next);
+    setFilter(HOME);
+    setPhase("unlocked");
+    api.setLockOnMinimize(next.settings.lockOnMinimize).catch(() => undefined);
+  }, []);
+
+  // Rust sperrt beim Minimieren selbst und meldet das hier
+  useEffect(() => {
+    if (!isTauri) return;
+    let unlisten: (() => void) | undefined;
+    import("@tauri-apps/api/event").then(({ listen }) =>
+      listen("vault-locked", () => showLocked()).then((u) => (unlisten = u)),
+    );
+    return () => unlisten?.();
+  }, [showLocked]);
+
+  // Auto-Sperre nach Inaktivität
+  const autoLockMinutes = data?.settings.autoLockMinutes ?? 0;
+  useEffect(() => {
+    if (phase !== "unlocked" || autoLockMinutes <= 0) return;
+    let last = Date.now();
+    const touch = () => (last = Date.now());
+    const events = ["pointermove", "pointerdown", "keydown", "wheel"] as const;
+    events.forEach((ev) => window.addEventListener(ev, touch, { passive: true }));
+    const timer = window.setInterval(() => {
+      if (Date.now() - last > autoLockMinutes * 60_000) {
+        lock();
+        toast("Automatisch gesperrt", { id: "auto-lock", description: `Nach ${autoLockMinutes} Min. ohne Aktivität.` });
+      }
+    }, 10_000);
+    return () => {
+      events.forEach((ev) => window.removeEventListener(ev, touch));
+      window.clearInterval(timer);
+    };
+  }, [phase, autoLockMinutes, lock]);
 
   const members = data?.members ?? [];
   const entries = data?.entries ?? [];
+  const health = useMemo(() => analyze(entries), [entries]);
 
   const counts = useMemo(() => {
     const category = { login: 0, kundennummer: 0, wlan: 0, notiz: 0 } as Record<Category, number>;
@@ -130,15 +181,16 @@ export default function App() {
   const visible = useMemo(
     () =>
       entries
-        .filter((e) => passesFilter(e, filter) && matches(e, query.trim()))
+        .filter((e) => passesFilter(e, filter, health) && matches(e, query.trim()))
         .sort((a, b) => a.title.localeCompare(b.title, "de")),
-    [entries, filter, query],
+    [entries, filter, query, health],
   );
 
   useEffect(() => {
-    if (editing?.id === undefined && editing) return; // neuer Eintrag: Auswahl nicht anfassen
+    if (filter.kind === "home") return;
+    if (editing && editing.id === undefined) return; // neuer Eintrag: Auswahl nicht anfassen
     if (!visible.some((e) => e.id === selectedId)) setSelectedId(visible[0]?.id);
-  }, [visible, selectedId, editing]);
+  }, [visible, selectedId, editing, filter.kind]);
 
   // ── Einträge ───────────────────────────────
 
@@ -147,7 +199,7 @@ export default function App() {
     const exists = data.entries.some((e) => e.id === entry.id);
     const nextEntries = exists ? data.entries.map((e) => (e.id === entry.id ? entry : e)) : [...data.entries, entry];
     persist({ ...data, entries: nextEntries });
-    if (!passesFilter(entry, filter)) setFilter({ kind: "all" });
+    if (!passesFilter(entry, filter, analyze(nextEntries))) setFilter({ kind: "all" });
     if (!matches(entry, query.trim())) setQuery("");
     setSelectedId(entry.id);
     setEditing(null);
@@ -163,18 +215,23 @@ export default function App() {
     toast(`${entry?.title ?? "Eintrag"} gelöscht`);
   }
 
-  function toggleFavorite(id: string) {
+  function updateEntry(id: string, patch: (e: Entry) => Entry) {
     if (!data) return;
-    persist({
-      ...data,
-      entries: data.entries.map((e) => (e.id === id ? { ...e, favorite: e.favorite ? undefined : true } : e)),
-    });
+    persist({ ...data, entries: data.entries.map((e) => (e.id === id ? patch(e) : e)) });
   }
 
   const startNew = useCallback(() => {
     setDialog(null);
+    setFilter((f) => (f.kind === "home" || f.kind === "health" ? { kind: "all" } : f));
     setEditing({});
   }, []);
+
+  function openEntry(id: string) {
+    setQuery("");
+    setFilter({ kind: "all" });
+    setSelectedId(id);
+    setEditing(null);
+  }
 
   // ── Familie ────────────────────────────────
 
@@ -198,9 +255,30 @@ export default function App() {
         e.memberIds.includes(id) ? { ...e, memberIds: e.memberIds.filter((x) => x !== id) } : e,
       ),
     });
-    if (filter.kind === "member" && filter.memberId === id) setFilter({ kind: "all" });
+    if (filter.kind === "member" && filter.memberId === id) setFilter(HOME);
     setDialog(null);
     toast(`${member?.name ?? "Person"} entfernt`);
+  }
+
+  // ── Einstellungen & Backup ─────────────────
+
+  function updateSettings(settings: Settings) {
+    if (!data) return;
+    persist({ ...data, settings });
+    api.setLockOnMinimize(settings.lockOnMinimize).catch(() => undefined);
+  }
+
+  /** Fehlende Einträge und Personen ergänzen – Vorhandenes bleibt unangetastet. */
+  function importData(incoming: VaultData) {
+    if (!data) return { entries: 0, members: 0 };
+    const memberIds = new Set(data.members.map((m) => m.id));
+    const entryIds = new Set(data.entries.map((e) => e.id));
+    const newMembers = incoming.members.filter((m) => !memberIds.has(m.id));
+    const newEntries = incoming.entries.filter((e) => !entryIds.has(e.id));
+    if (newMembers.length || newEntries.length) {
+      persist({ ...data, members: [...data.members, ...newMembers], entries: [...data.entries, ...newEntries] });
+    }
+    return { entries: newEntries.length, members: newMembers.length };
   }
 
   // ── Tastatur (bewusst ohne Animation) ──────
@@ -221,15 +299,21 @@ export default function App() {
 
       if (mod && (key === "f" || key === "k")) {
         ev.preventDefault();
-        searchRef.current?.focus();
-        searchRef.current?.select();
+        const target = filter.kind === "home" ? document.getElementById("home-search") : searchRef.current;
+        (target as HTMLInputElement | null)?.focus();
+        (target as HTMLInputElement | null)?.select();
       } else if (mod && key === "n") {
         ev.preventDefault();
         startNew();
+      } else if (filter.kind === "home") {
+        return;
       } else if (mod && key === "e" && selectedId) {
         ev.preventDefault();
         setEditing({ id: selectedId });
-      } else if ((ev.key === "ArrowDown" || ev.key === "ArrowUp") && (!isTyping(ev.target) || ev.target === searchRef.current)) {
+      } else if (
+        (ev.key === "ArrowDown" || ev.key === "ArrowUp") &&
+        (!isTyping(ev.target) || ev.target === searchRef.current)
+      ) {
         const i = visible.findIndex((e) => e.id === selectedId);
         const next = ev.key === "ArrowDown" ? Math.min(i + 1, visible.length - 1) : Math.max(i - 1, 0);
         if (visible[next]) {
@@ -248,18 +332,24 @@ export default function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, visible, selectedId, lock, editing, dialog, startNew]);
+  }, [phase, visible, selectedId, lock, editing, dialog, startNew, filter.kind]);
 
   // ── Ansicht ────────────────────────────────
 
-  const listTitle =
-    filter.kind === "all"
-      ? "Alle Einträge"
-      : filter.kind === "favorites"
-        ? "Favoriten"
-        : filter.kind === "member"
-          ? (members.find((m) => m.id === filter.memberId)?.name ?? "")
-          : { login: "Logins", kundennummer: "Kundennummern", wlan: "WLAN", notiz: "Notizen" }[filter.category];
+  const listTitle = (() => {
+    switch (filter.kind) {
+      case "favorites":
+        return "Favoriten";
+      case "member":
+        return members.find((m) => m.id === filter.memberId)?.name ?? "";
+      case "category":
+        return { login: "Logins", kundennummer: "Kundennummern", wlan: "WLAN", notiz: "Notizen" }[filter.category];
+      case "health":
+        return ISSUE_LABEL[filter.issue];
+      default:
+        return "Alle Einträge";
+    }
+  })();
 
   const selectedEntry = entries.find((e) => e.id === selectedId);
   const editingEntry = editing?.id ? entries.find((e) => e.id === editing.id) : undefined;
@@ -285,9 +375,8 @@ export default function App() {
           return result;
         }}
         onDone={(result) => {
-          setData(pending.current);
           setStatus({ ...status, exists: true, unlocked: true, helloEnabled: result.helloEnabled });
-          setPhase("unlocked");
+          enterUnlocked(pending.current!);
           if (result.helloError) {
             toast.warning("Windows Hello wurde nicht eingerichtet", {
               description: `${result.helloError} Du kannst es später in den Einstellungen nachholen.`,
@@ -310,9 +399,8 @@ export default function App() {
           pending.current = await api.unlockWithPassword(pw);
         }}
         onUnlocked={() => {
-          setData(pending.current);
+          enterUnlocked(pending.current!);
           pending.current = null;
-          setPhase("unlocked");
         }}
       />
     );
@@ -334,40 +422,68 @@ export default function App() {
           theme={theme}
           onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         />
-        <EntryList
-          title={listTitle}
-          entries={visible}
-          isEmptyVault={entries.length === 0}
-          members={members}
-          selectedId={editing && !editing.id ? undefined : selectedId}
-          onSelect={(id) => {
-            setEditing(null);
-            setSelectedId(id);
-          }}
-          onNew={startNew}
-          query={query}
-          onQuery={setQuery}
-          searchRef={searchRef}
-        />
-        {editing ? (
-          <EntryEditor
-            key={editing.id ?? "new"}
-            entry={editingEntry}
+
+        {filter.kind === "home" && !editing ? (
+          <Home
+            entries={entries}
             members={members}
-            defaultMemberIds={filter.kind === "member" ? [filter.memberId] : []}
-            onSave={saveEntry}
-            onCancel={() => setEditing(null)}
-            onDelete={editingEntry ? () => deleteEntry(editingEntry.id) : undefined}
+            health={health}
+            memberCounts={counts.member}
+            onSearch={(q) => {
+              setQuery(q);
+              setFilter({ kind: "all" });
+              // Fokus wandert in die Listensuche, Weitertippen geht nahtlos
+              requestAnimationFrame(() => searchRef.current?.focus());
+            }}
+            onOpen={openEntry}
+            onMember={(id) => setFilter({ kind: "member", memberId: id })}
+            onIssue={(issue) => setFilter({ kind: "health", issue })}
+            onNew={startNew}
+            onAddMember={() => setDialog({ kind: "member" })}
           />
         ) : (
-          <EntryDetail
-            entry={selectedEntry}
-            members={members}
-            isEmptyVault={entries.length === 0}
-            onEdit={() => selectedEntry && setEditing({ id: selectedEntry.id })}
-            onNew={startNew}
-            onToggleFavorite={() => selectedEntry && toggleFavorite(selectedEntry.id)}
-          />
+          <>
+            <EntryList
+              title={listTitle}
+              entries={visible}
+              isEmptyVault={entries.length === 0}
+              members={members}
+              selectedId={editing && !editing.id ? undefined : selectedId}
+              onSelect={(id) => {
+                setEditing(null);
+                setSelectedId(id);
+              }}
+              onNew={startNew}
+              query={query}
+              onQuery={setQuery}
+              searchRef={searchRef}
+            />
+            {editing ? (
+              <EntryEditor
+                key={editing.id ?? "new"}
+                entry={editingEntry}
+                members={members}
+                defaultMemberIds={filter.kind === "member" ? [filter.memberId] : []}
+                onSave={saveEntry}
+                onCancel={() => setEditing(null)}
+                onDelete={editingEntry ? () => deleteEntry(editingEntry.id) : undefined}
+              />
+            ) : (
+              <EntryDetail
+                entry={selectedEntry}
+                members={members}
+                isEmptyVault={entries.length === 0}
+                onEdit={() => selectedEntry && setEditing({ id: selectedEntry.id })}
+                onNew={startNew}
+                onToggleFavorite={() =>
+                  selectedEntry && updateEntry(selectedEntry.id, (e) => ({ ...e, favorite: e.favorite ? undefined : true }))
+                }
+                onUsed={() =>
+                  selectedEntry && updateEntry(selectedEntry.id, (e) => ({ ...e, usedAt: new Date().toISOString() }))
+                }
+              />
+            )}
+          </>
         )}
 
         {dialog?.kind === "member" && (
@@ -375,7 +491,9 @@ export default function App() {
             member={dialog.member}
             existingNames={members.map((m) => m.name)}
             entryCount={dialog.member ? (counts.member[dialog.member.id] ?? 0) : 0}
-            suggestedHue={MEMBER_HUES.find((h) => !members.some((m) => m.hue === h)) ?? MEMBER_HUES[members.length % MEMBER_HUES.length]}
+            suggestedHue={
+              MEMBER_HUES.find((h) => !members.some((m) => m.hue === h)) ?? MEMBER_HUES[members.length % MEMBER_HUES.length]
+            }
             onSave={saveMember}
             onDelete={dialog.member ? () => deleteMember(dialog.member!.id) : undefined}
             onClose={() => setDialog(null)}
@@ -383,9 +501,12 @@ export default function App() {
         )}
         {dialog?.kind === "settings" && status && (
           <SettingsDialog
+            settings={data.settings}
+            onSettingsChange={updateSettings}
             helloSupported={status.helloSupported}
             helloEnabled={status.helloEnabled}
             onHelloChanged={(on) => setStatus({ ...status, helloEnabled: on })}
+            onImport={importData}
             onClose={() => setDialog(null)}
           />
         )}

@@ -1,9 +1,12 @@
-import { Hash, KeyRound, Layers, Lock, Moon, Pencil, Plus, Settings, Star, StickyNote, Sun, Wifi } from "lucide-react";
+import { Hash, House, KeyRound, Layers, Lock, Moon, Pencil, Plus, Settings, Star, StickyNote, Sun, Wifi } from "lucide-react";
 import type { ReactNode } from "react";
+import type { Issue } from "../lib/health";
 import type { Category, Member } from "../lib/types";
 import { Avatar } from "./Avatar";
 
 export type Filter =
+  | { kind: "home" }
+  | { kind: "health"; issue: Issue }
   | { kind: "all" }
   | { kind: "favorites" }
   | { kind: "category"; category: Category }
@@ -46,6 +49,16 @@ export function Sidebar(props: Props) {
       </div>
 
       <nav className="nav">
+        <button
+          className="nav-item"
+          data-active={filter.kind === "home" || undefined}
+          onClick={() => onFilter({ kind: "home" })}
+        >
+          <span className="nav-icon">
+            <House size={15} />
+          </span>
+          <span className="nav-label">Übersicht</span>
+        </button>
         <Item f={{ kind: "all" }} icon={<Layers size={15} />} label="Alle Einträge" count={counts.all} />
         <Item f={{ kind: "favorites" }} icon={<Star size={15} />} label="Favoriten" count={counts.favorites} />
       </nav>

@@ -1,3 +1,4 @@
+mod clipboard;
 mod hello;
 mod vault;
 
@@ -5,9 +6,10 @@ use serde::Serialize;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State, WindowEvent};
 use vault::{Key, VaultFile};
 
 /// Entsperrter Zustand: Datei + Schlüssel nur im Arbeitsspeicher, wird beim Sperren verworfen.
@@ -19,6 +21,20 @@ struct Session {
 struct AppState {
     path: PathBuf,
     session: Mutex<Option<Session>>,
+    /// Beim Minimieren sperren (Einstellung, vom Frontend nach dem Entsperren gesetzt)
+    lock_on_minimize: AtomicBool,
+    /// Sequenznummer der Zwischenablage nach unserem letzten Kopieren
+    clipboard_seq: Mutex<Option<u32>>,
+}
+
+impl AppState {
+    /// Sperren: Schlüssel verwerfen und eigene Zwischenablage-Inhalte entfernen.
+    fn lock_now(&self) {
+        *self.session.lock().unwrap() = None;
+        if let Some(seq) = self.clipboard_seq.lock().unwrap().take() {
+            clipboard::clear_if_unchanged(seq);
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -147,7 +163,65 @@ async fn vault_unlock_hello(state: State<'_, AppState>) -> CmdResult<Value> {
 #[tauri::command]
 fn vault_lock(state: State<'_, AppState>) {
     // Drop → Schlüssel wird durch Zeroizing überschrieben
-    *state.session.lock().unwrap() = None;
+    state.lock_now();
+}
+
+#[tauri::command]
+fn set_lock_on_minimize(state: State<'_, AppState>, enabled: bool) {
+    state.lock_on_minimize.store(enabled, Ordering::Relaxed);
+}
+
+/// Geheimnis kopieren (ohne Windows-Verlauf) und nach `clear_after_secs` wieder entfernen.
+#[tauri::command]
+fn copy_secret(app: tauri::AppHandle, state: State<'_, AppState>, text: String, clear_after_secs: u64) -> CmdResult<()> {
+    if state.session.lock().unwrap().is_none() {
+        return Err("Der Tresor ist gesperrt.".into());
+    }
+    let seq = clipboard::copy_secret(&text)?;
+    *state.clipboard_seq.lock().unwrap() = Some(seq);
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(clear_after_secs.clamp(5, 600)));
+        clipboard::clear_if_unchanged(seq);
+        let state = app.state::<AppState>();
+        let mut current = state.clipboard_seq.lock().unwrap();
+        if *current == Some(seq) {
+            *current = None;
+        }
+    });
+    Ok(())
+}
+
+/// Verschlüsseltes Backup mit eigenem Backup-Passwort schreiben.
+#[tauri::command]
+async fn vault_export(state: State<'_, AppState>, path: String, password: String) -> CmdResult<()> {
+    if password.chars().count() < 10 {
+        return Err("Das Backup-Passwort muss mindestens 10 Zeichen haben.".into());
+    }
+    let data = {
+        let guard = state.session.lock().unwrap();
+        let s = guard.as_ref().ok_or("Der Tresor ist gesperrt.")?;
+        s.file.read_data(&s.key).map_err(|e| e.to_string())?
+    };
+    let backup = blocking(move || VaultFile::create(&password, &data).map(|(f, _)| f).map_err(|e| e.to_string())).await?;
+    fs::write(&path, backup.to_json()).map_err(|e| format!("Backup konnte nicht gespeichert werden: {e}"))
+}
+
+/// Backup-Datei entschlüsseln und Inhalt zurückgeben (das Zusammenführen macht das Frontend).
+#[tauri::command]
+async fn vault_import_read(state: State<'_, AppState>, path: String, password: String) -> CmdResult<Value> {
+    if state.session.lock().unwrap().is_none() {
+        return Err("Der Tresor ist gesperrt.".into());
+    }
+    let json = fs::read_to_string(&path).map_err(|e| format!("Datei nicht lesbar: {e}"))?;
+    let file = VaultFile::parse(&json).map_err(|_| "Das ist keine gültige Tresor-Backup-Datei.".to_string())?;
+    blocking(move || {
+        let key = file.unlock_with_password(&password).map_err(|_| {
+            std::thread::sleep(Duration::from_millis(600));
+            "Falsches Backup-Passwort".to_string()
+        })?;
+        data_value(&file, &key)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -222,11 +296,30 @@ async fn vault_change_password(state: State<'_, AppState>, current: String, next
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             fs::create_dir_all(&dir)?;
-            app.manage(AppState { path: dir.join("tresor.json"), session: Mutex::new(None) });
+            app.manage(AppState {
+                path: dir.join("tresor.json"),
+                session: Mutex::new(None),
+                lock_on_minimize: AtomicBool::new(true),
+                clipboard_seq: Mutex::new(None),
+            });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Beim Minimieren sofort sperren – im Rust-Kern, damit der Schlüssel sicher weg ist
+            if let WindowEvent::Resized(_) = event {
+                if window.is_minimized().unwrap_or(false) {
+                    let state = window.state::<AppState>();
+                    let unlocked = state.session.lock().unwrap().is_some();
+                    if unlocked && state.lock_on_minimize.load(Ordering::Relaxed) {
+                        state.lock_now();
+                        let _ = window.emit("vault-locked", ());
+                    }
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             vault_status,
@@ -238,6 +331,10 @@ pub fn run() {
             vault_enable_hello,
             vault_disable_hello,
             vault_change_password,
+            set_lock_on_minimize,
+            copy_secret,
+            vault_export,
+            vault_import_read,
         ])
         .run(tauri::generate_context!())
         .expect("Fehler beim Starten von Tresor");

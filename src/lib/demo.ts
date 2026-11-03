@@ -8,6 +8,7 @@ export const DEMO_MEMBERS: Member[] = [
 ];
 
 const d = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+const m = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
 
 export const DEMO_ENTRIES: Entry[] = [
   {
@@ -23,6 +24,7 @@ export const DEMO_ENTRIES: Entry[] = [
     memberIds: ["m1", "m2"],
     favorite: true,
     updatedAt: d(3),
+    usedAt: m(14),
   },
   {
     id: "e2",
@@ -62,7 +64,7 @@ export const DEMO_ENTRIES: Entry[] = [
     domain: "antolin.de",
     category: "login",
     username: "mia.lesen",
-    password: "Buch-Drache-9",
+    password: "lesen123",
     notes: "Lese-Plattform der Schule.",
     memberIds: ["m3"],
     updatedAt: d(20),
@@ -75,7 +77,9 @@ export const DEMO_ENTRIES: Entry[] = [
     username: "ben@example.de",
     password: "vB3$nK8!xQ1zr",
     memberIds: ["m2"],
+    favorite: true,
     updatedAt: d(2),
+    usedAt: m(60 * 26),
   },
   {
     id: "e7",
@@ -95,7 +99,7 @@ export const DEMO_ENTRIES: Entry[] = [
     username: "FRITZ!Box 7590",
     password: "8217 4402 9931 5560",
     memberIds: ["m1", "m2", "m3"],
-    updatedAt: d(90),
+    updatedAt: d(420),
   },
   {
     id: "e9",
@@ -103,7 +107,8 @@ export const DEMO_ENTRIES: Entry[] = [
     domain: "spotify.com",
     category: "login",
     username: "ben@example.de",
-    password: "Musik&Kaffee55",
+    password: "Popcorn#Abend77",
+    usedAt: m(180),
     memberIds: ["m2"],
     updatedAt: d(8),
   },

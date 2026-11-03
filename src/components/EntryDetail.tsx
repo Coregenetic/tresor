@@ -13,6 +13,7 @@ interface Props {
   onEdit: () => void;
   onNew: () => void;
   onToggleFavorite: () => void;
+  onUsed: () => void;
 }
 
 function relative(iso: string) {
@@ -24,21 +25,21 @@ function relative(iso: string) {
   return months === 1 ? "vor einem Monat" : `vor ${months} Monaten`;
 }
 
-function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function Field({ label, value, mono, onUsed }: { label: string; value: string; mono?: boolean; onUsed: () => void }) {
   return (
     <div className="field">
       <div className="field-label">{label}</div>
       <div className="field-row">
         <div className={mono ? "field-value field-value--mono" : "field-value"}>{value}</div>
         <div className="field-actions">
-          <CopyButton value={value} label={label} />
+          <CopyButton value={value} label={label} onCopied={onUsed} />
         </div>
       </div>
     </div>
   );
 }
 
-function PasswordField({ value }: { value: string }) {
+function PasswordField({ value, onUsed }: { value: string; onUsed: () => void }) {
   const [shown, setShown] = useState(false);
   return (
     <div className="field">
@@ -59,14 +60,14 @@ function PasswordField({ value }: { value: string }) {
           >
             {shown ? <EyeOff size={15} strokeWidth={1.8} /> : <Eye size={15} strokeWidth={1.8} />}
           </button>
-          <CopyButton value={value} label="Passwort" />
+          <CopyButton value={value} label="Passwort" onCopied={onUsed} />
         </div>
       </div>
     </div>
   );
 }
 
-export function EntryDetail({ entry, members, isEmptyVault, onEdit, onNew, onToggleFavorite }: Props) {
+export function EntryDetail({ entry, members, isEmptyVault, onEdit, onNew, onToggleFavorite, onUsed }: Props) {
   if (!entry) {
     return (
       <section className="detail-pane detail-pane--empty">
@@ -121,15 +122,21 @@ export function EntryDetail({ entry, members, isEmptyVault, onEdit, onNew, onTog
       {hasCredentials && (
         <div className="card">
           {entry.username && (
-            <Field label={entry.category === "wlan" ? "Netzwerkname" : "Benutzername"} value={entry.username} />
+            <Field label={entry.category === "wlan" ? "Netzwerkname" : "Benutzername"} value={entry.username} onUsed={onUsed} />
           )}
-          {entry.password && <PasswordField value={entry.password} />}
-          {entry.customerNumber && <Field label="Kundennummer" value={entry.customerNumber} mono />}
+          {entry.password && <PasswordField value={entry.password} onUsed={onUsed} />}
+          {entry.customerNumber && <Field label="Kundennummer" value={entry.customerNumber} mono onUsed={onUsed} />}
           {entry.url && (
             <div className="field">
               <div className="field-label">Website</div>
               <div className="field-row">
-                <button className="field-value field-link" onClick={() => openExternal(entry.url!)}>
+                <button
+                  className="field-value field-link"
+                  onClick={() => {
+                    openExternal(entry.url!);
+                    onUsed();
+                  }}
+                >
                   {entry.url.replace(/^https?:\/\//, "")}
                 </button>
                 <div className="field-actions">
